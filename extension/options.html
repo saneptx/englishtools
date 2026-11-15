@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>English Tools 设置</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <h1>English Tools 设置</h1>
+      <p class="hint">API Key 保存在浏览器同步存储中，请求只发往你填写的 DeepSeek 地址。</p>
+
+      <label>
+        <span>启用划词翻译</span>
+        <input id="enabled" type="checkbox" checked />
+      </label>
+
+      <label>
+        DeepSeek API Key
+        <input id="apiKey" type="password" placeholder="sk-..." />
+      </label>
+
+      <label>
+        Base URL
+        <input id="baseUrl" type="text" value="https://api.deepseek.com" />
+      </label>
+
+      <label>
+        模型
+        <input id="model" type="text" value="deepseek-chat" />
+      </label>
+
+      <button id="save" type="button">保存</button>
+      <p id="msg" class="msg"></p>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

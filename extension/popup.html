@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>English Tools</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <strong>English Tools</strong>
+      <a href="options.html" target="_blank">设置</a>
+    </header>
+    <p class="hint">在任意网页划选英文，选区下方会显示中文。下方可输入中文实时译成英文。</p>
+    <label for="cn">中文</label>
+    <textarea id="cn" rows="4" placeholder="输入中文…"></textarea>
+    <div class="label">英文</div>
+    <div id="en" class="en-box">译文将显示在这里</div>
+    <div class="row">
+      <button id="copy" type="button" disabled>复制英文</button>
+    </div>
+    <p id="status" class="status"></p>
+    <script src="popup.js"></script>
+  </body>
+</html>

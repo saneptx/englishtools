@@ -1,0 +1,65 @@
+#english-tools-select-root.et-root {
+  position: absolute;
+  z-index: 2147483646;
+  box-sizing: border-box;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  pointer-events: auto;
+}
+
+#english-tools-select-root .et-card {
+  background: #15202b;
+  color: #e8eef6;
+  border: 1px solid #3b9eff;
+  border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);
+  padding: 10px 12px;
+  line-height: 1.5;
+}
+
+#english-tools-select-root .et-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: #8b9bb0;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+#english-tools-select-root .et-close {
+  border: none;
+  background: transparent;
+  color: #8b9bb0;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+#english-tools-select-root .et-close:hover {
+  color: #e8eef6;
+}
+
+#english-tools-select-root .et-source {
+  color: #8b9bb0;
+  font-size: 12px;
+  margin-bottom: 6px;
+  max-height: 3.6em;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+#english-tools-select-root .et-body {
+  font-size: 15px;
+  color: #e8eef6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+#english-tools-select-root .et-body.et-error {
+  color: #ff6b6b;
+  font-size: 13px;
+}
