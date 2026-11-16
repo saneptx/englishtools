@@ -1,4 +1,14 @@
+import { app } from 'electron'
+import path from 'node:path'
 import ElectronStore from 'electron-store'
+
+/**
+ * 固定数据目录为 <appData>/englishtools。
+ * 否则目录名跟随 package.json 的 productName（English Tools），
+ * 开发版与安装版、改名前后会各用一套设置（API Key、字幕缓存等）。
+ * 必须在创建 Store 之前执行；本模块是 main.ts 最先导入的业务模块。
+ */
+app.setPath('userData', path.join(app.getPath('appData'), 'englishtools'))
 
 // CJS interop when bundled as external require()
 const Store = ((ElectronStore as unknown as { default?: typeof ElectronStore }).default ??

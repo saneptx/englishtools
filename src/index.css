@@ -424,6 +424,11 @@ body.is-blurred .traffic-lights:not(:hover) .light {
   background: var(--accent);
 }
 
+.switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .switch-thumb {
   position: absolute;
   top: 2px;

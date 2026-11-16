@@ -11,7 +11,11 @@
     "preview": "vite preview",
     "postinstall": "node scripts/ensure-electron.js && node scripts/build-mac-helper.js",
     "build:mac-helper": "node scripts/build-mac-helper.js",
-    "predev": "node scripts/build-mac-helper.js"
+    "predev": "node scripts/build-mac-helper.js",
+    "predist": "node scripts/build-mac-helper.js",
+    "dist": "npm run build && electron-builder --publish never",
+    "dist:mac": "node scripts/build-mac-helper.js && npm run build && electron-builder --mac --publish never",
+    "dist:win": "npm run build && electron-builder --win --publish never"
   },
   "dependencies": {
     "electron-store": "^8.2.0",
@@ -19,7 +23,6 @@
     "react-dom": "^18.3.1",
     "tesseract.js": "^5.1.1",
     "uiohook-napi": "^1.5.5",
-    "youtube-transcript": "^1.2.1",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
@@ -27,6 +30,7 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.4.11",
+    "electron-builder": "^26.18.0",
     "typescript": "^5.7.3",
     "vite": "^6.0.7",
     "vite-plugin-electron": "^0.28.8",
@@ -37,5 +41,86 @@
     "esbuild@0.25.12": true,
     "tesseract.js@5.1.1": true,
     "uiohook-napi@1.5.5": true
+  },
+  "productName": "English Tools",
+  "build": {
+    "appId": "com.englishtools.app",
+    "productName": "English Tools",
+    "copyright": "MIT",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "assets/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "eng.traineddata",
+        "to": "tessdata/eng.traineddata"
+      }
+    ],
+    "asarUnpack": [
+      "**/node_modules/uiohook-napi/**",
+      "**/node_modules/tesseract.js/**",
+      "**/node_modules/tesseract.js-core/**"
+    ],
+    "npmRebuild": false,
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.education",
+      "icon": "build/icon.png",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "extraResources": [
+        {
+          "from": "native/bin/mac-input-tap",
+          "to": "native/bin/mac-input-tap"
+        }
+      ],
+      "extendInfo": {
+        "NSAppleEventsUsageDescription": "English Tools 需要通过「系统事件」读取选中的文字和输入框内容，用于划词翻译和打字译英。",
+        "NSScreenCaptureUsageDescription": "English Tools 需要录制屏幕用于截图翻译和识别微信输入框。"
+      }
+    },
+    "dmg": {
+      "title": "English Tools"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "English Tools"
+    }
   }
 }

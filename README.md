@@ -54,6 +54,29 @@ Linux 仅做了基础兼容（划词读取 PRIMARY 选区），打字译英与�
 
 字幕翻译和重点词由 DeepSeek 分批生成（边看边出），结果按视频缓存，再次打开无需重新翻译。最近 20 个视频保留缓存。
 
+## 安装
+
+### 下载安装包
+在 GitHub 仓库的 **Actions → Build installers → Run workflow** 运行一次（或推送 `v1.0.1` 这样的标签），完成后在运行页面底部的 Artifacts 下载：
+
+- macOS：`English Tools-x.y.z-arm64.dmg`（Apple Silicon）/ `-x64.dmg`（Intel），打开后把 English Tools 拖进「应用程序」
+- Windows：`English Tools Setup x.y.z.exe` 安装包，或 `-win.zip` 免安装版（解压后运行 `English Tools.exe`）
+
+安装包未做代码签名：
+- macOS 首次打开若提示「无法验证开发者」，在「系统设置 → 隐私与安全性」底部点「仍要打开」；从网上下载的 dmg 若提示「已损坏」，运行 `xattr -cr "/Applications/English Tools.app"`
+- Windows 若弹出 SmartScreen，点「更多信息 → 仍要运行」
+
+安装版的权限记在 English Tools 名下（不再是终端）。设置页「通用 → 开机自动启动」可设为登录后在后台启动。
+
+### 本地打包
+
+```bash
+npm run dist:mac   # macOS：release/*.dmg（需 Xcode 命令行工具，用于编译输入监听辅助程序）
+npm run dist:win   # Windows 上运行：release/*.exe 安装包 + *.zip 免安装版
+```
+
+在 Apple Silicon Mac 上交叉打包 Windows 只能生成 zip 免安装版：NSIS 安装包的编译器是 Intel 程序，需要先安装 Rosetta（`softwareupdate --install-rosetta`）。
+
 ## 开发运行
 
 ```bash

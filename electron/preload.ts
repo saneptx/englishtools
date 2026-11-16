@@ -48,6 +48,9 @@ const api = {
   onLearnOpenVideo: (cb: (input: string) => void) => listen<string>('learn:open-video', cb),
   onLearnStatus: (cb: (s: LearnStatus) => void) => listen<LearnStatus>('learn:status', cb),
   onLearnTranslated: (cb: (p: TranslatedItems) => void) => listen<TranslatedItems>('learn:translated', cb),
+  getAutostart: (): Promise<{ supported: boolean; enabled: boolean }> => ipcRenderer.invoke('autostart:get'),
+  setAutostart: (enabled: boolean): Promise<{ supported: boolean; enabled: boolean }> =>
+    ipcRenderer.invoke('autostart:set', enabled),
   getPermissions: (): Promise<{ accessibility: boolean; screen: boolean }> =>
     ipcRenderer.invoke('permissions:status'),
   openPermissionSettings: (kind: 'accessibility' | 'screen') =>

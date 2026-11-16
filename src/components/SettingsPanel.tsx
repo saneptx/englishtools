@@ -42,13 +42,24 @@ function formatAccelerator(accel: string): string[] {
     .map((k) => map[k.toLowerCase()] ?? (k.length === 1 ? k.toUpperCase() : k))
 }
 
-function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+function Switch({
+  checked,
+  onChange,
+  label,
+  disabled = false,
+}: {
+  checked: boolean
+  onChange: (v: boolean) => void
+  label: string
+  disabled?: boolean
+}) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      disabled={disabled}
       className={`switch${checked ? ' is-on' : ''}`}
       onClick={() => onChange(!checked)}
     >
@@ -118,6 +129,11 @@ export default function SettingsPanel() {
   const [showKey, setShowKey] = useState(false)
   const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
   const [perms, setPerms] = useState({ accessibility: true, screen: true })
+  const [autostart, setAutostart] = useState({ supported: false, enabled: false })
+
+  useEffect(() => {
+    void window.englishTools.getAutostart().then(setAutostart)
+  }, [])
   const statusTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -239,6 +255,31 @@ export default function SettingsPanel() {
             )}
           </div>
         )}
+
+        <Section title="通用">
+          <div className="row-item">
+            <div className="row-text">
+              <div className="row-title">开机自动启动</div>
+              <div className="row-desc">
+                {autostart.supported
+                  ? `登录${IS_MAC ? ' Mac' : ' Windows'} 后在后台启动，常驻${IS_MAC ? '菜单栏' : '系统托盘'}`
+                  : '安装正式版后可用（当前是开发模式）'}
+              </div>
+            </div>
+            <Switch
+              label="开机自动启动"
+              checked={autostart.enabled}
+              disabled={!autostart.supported}
+              onChange={(v) => {
+                setAutostart((a) => ({ ...a, enabled: v }))
+                void window.englishTools
+                  .setAutostart(v)
+                  .then(setAutostart)
+                  .catch((e) => flash('error', e instanceof Error ? e.message : String(e)))
+              }}
+            />
+          </div>
+        </Section>
 
         <Section title="学习">
           <div className="row-item">

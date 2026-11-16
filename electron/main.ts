@@ -815,6 +815,18 @@ function registerIpc() {
   })
 
   ipcMain.handle('permissions:status', () => macPermissionStatus())
+
+  // 开机自启：由系统登录项管理（macOS 登录项 / Windows 启动项），不存配置文件。
+  // 开发模式下会把裸 Electron 注册成启动项，所以只在打包后的正式版开放。
+  const autostartState = () => ({
+    supported: app.isPackaged,
+    enabled: app.isPackaged && app.getLoginItemSettings().openAtLogin,
+  })
+  ipcMain.handle('autostart:get', () => autostartState())
+  ipcMain.handle('autostart:set', (_e, enabled: boolean) => {
+    if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: true })
+    return autostartState()
+  })
   ipcMain.handle('permissions:open', (_e, kind: MacPermission) => {
     if (!IS_MAC || !MAC_PRIVACY_PANES[kind]) return
     if (kind === 'accessibility') systemPreferences.isTrustedAccessibilityClient(true)

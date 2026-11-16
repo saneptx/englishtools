@@ -17,7 +17,6 @@ export default defineConfig({
                 'electron',
                 'electron-store',
                 'tesseract.js',
-                'youtube-transcript',
                 'uiohook-napi',
               ],
             },

@@ -1,0 +1,57 @@
+# 在真实的 macOS / Windows 机器上打包安装包。
+# 触发：GitHub 网页 Actions → Build installers → Run workflow，或推送 v* 标签（如 v1.0.1）。
+# 产物在本次运行页面底部的 Artifacts 里下载；推送标签时还会附加到对应的 Release 草稿。
+name: Build installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            script: dist:mac
+            files: |
+              release/*.dmg
+          - os: windows-latest
+            script: dist:win
+            files: |
+              release/*.exe
+              release/*.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # postinstall 会修复 Electron 二进制，并在 macOS 上编译输入监听辅助程序
+      - run: npm ci
+
+      - run: npm run ${{ matrix.script }}
+        env:
+          # 不自动发布，只生成本地文件
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: english-tools-${{ matrix.os }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: ${{ matrix.files }}
