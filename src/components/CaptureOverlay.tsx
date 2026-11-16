@@ -40,7 +40,7 @@ export default function CaptureOverlay() {
 
   return (
     <div
-      className="overlay-root"
+      className={`overlay-root${rect && rect.width > 0 ? ' has-rect' : ''}`}
       onMouseDown={(e) => {
         start.current = { x: e.clientX, y: e.clientY }
         setRect({ x: e.clientX, y: e.clientY, width: 0, height: 0 })
@@ -71,12 +71,18 @@ export default function CaptureOverlay() {
     >
       {bg ? <div className="overlay-freeze" style={{ backgroundImage: `url(${bg})` }} /> : null}
       <div className="overlay-dim" />
-      <div className="overlay-hint">框选需要翻译的区域，Esc 取消</div>
-      {rect && (
+      <div className="overlay-hint">
+        拖动框选要翻译的区域<kbd>Esc</kbd>取消
+      </div>
+      {rect && rect.width > 0 && (
         <div
-          className="selection-rect"
+          className={`selection-rect${rect.y < 32 ? ' is-top' : ''}`}
           style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
-        />
+        >
+          <span className="selection-size">
+            {Math.round(rect.width)} × {Math.round(rect.height)}
+          </span>
+        </div>
       )}
     </div>
   )

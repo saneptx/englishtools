@@ -10,6 +10,8 @@ import {
   clipboard,
   globalShortcut,
   desktopCapturer,
+  systemPreferences,
+  nativeTheme,
   type NativeImage,
   type Rectangle,
 } from 'electron'
@@ -24,6 +26,7 @@ import { captureSelectedText } from './services/clipboard'
 import { ocrFromDataUrl } from './services/ocr'
 import { synthesizeEdgeTts } from './services/tts'
 import { readFocusedInput, replaceFocusedInputText } from './services/inputMonitor'
+import { macScreenOcrAvailable, warmUpMacOcr } from './services/macScreenOcr'
 import { type ScreenRect } from './services/selectionBounds'
 import {
   startSelectionHook,
@@ -31,6 +34,7 @@ import {
   setSelectionHookEnabled,
   setTypingHookEnabled,
   setSelectionHookSuspended,
+  waitForModifiersReleased,
   type SelectionRect,
 } from './services/selectionHook'
 
@@ -57,13 +61,38 @@ let ignoreOutsideUntil = 0
 let lastBubbleAnchor: ScreenRect | null = null
 let lastBubbleMode: 'selection' | 'screenshot' | 'typing' = 'selection'
 let lastTypedSourceText = ''
-let registeredScreenshotHotkey = ''
+const registeredHotkeys = new Set<string>()
 const activeBubbleShortcuts = new Set<string>()
 let pendingCaptureImage: NativeImage | null = null
 let pendingCaptureScale = 1
 let overlayBounds: Rectangle | null = null
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL
+const IS_MAC = process.platform === 'darwin'
+const IS_WIN = process.platform === 'win32'
+
+type MacPermission = 'accessibility' | 'screen'
+
+const MAC_PRIVACY_PANES: Record<MacPermission, string> = {
+  accessibility: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
+  screen: 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+}
+
+function macPermissionStatus() {
+  if (!IS_MAC) return { accessibility: true, screen: true }
+  return {
+    accessibility: systemPreferences.isTrustedAccessibilityClient(false),
+    screen: systemPreferences.getMediaAccessStatus('screen') === 'granted',
+  }
+}
+
+/** macOS 托盘常驻：只有设置窗口可见时才显示 Dock 图标（同时提供 Edit 菜单让 Cmd+C/V 在输入框可用） */
+function syncDockVisibility() {
+  if (!IS_MAC || !app.dock) return
+  const visible = !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()
+  if (visible) void app.dock.show()
+  else app.dock.hide()
+}
 
 function preloadPath() {
   return path.join(__dirname, 'preload.js')
@@ -77,13 +106,17 @@ function rendererUrl(hash = '') {
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
-    width: 440,
-    height: 560,
-    minWidth: 380,
-    minHeight: 420,
+    width: 460,
+    height: 640,
+    minWidth: 400,
+    minHeight: 480,
     show: false,
-    frame: false,
-    backgroundColor: '#0f1419',
+    // macOS 用系统红绿灯按钮；Windows 无边框自绘标题栏
+    frame: IS_MAC,
+    ...(IS_MAC
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 12 } }
+      : {}),
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f2f2f7',
     skipTaskbar: false,
     webPreferences: {
       preload: preloadPath(),
@@ -94,6 +127,8 @@ function createMainWindow() {
   })
 
   mainWindow.loadURL(rendererUrl())
+  mainWindow.on('show', syncDockVisibility)
+  mainWindow.on('hide', syncDockVisibility)
   mainWindow.on('close', (e) => {
     if (!quitting) {
       e.preventDefault()
@@ -108,6 +143,7 @@ function createMainWindow() {
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) createMainWindow()
   mainWindow?.show()
+  if (IS_MAC) app.focus({ steal: true })
   mainWindow?.focus()
 }
 
@@ -129,6 +165,8 @@ function createBubbleWindow() {
     hasShadow: false,
     focusable: false,
     thickFrame: false,
+    // macOS：非激活面板，点击卡片不会抢走原应用的焦点（替换/粘贴依赖这一点）
+    ...(IS_MAC ? { type: 'panel' as const, acceptFirstMouse: true } : {}),
     webPreferences: {
       preload: preloadPath(),
       contextIsolation: true,
@@ -137,6 +175,11 @@ function createBubbleWindow() {
     },
   })
   bubbleWindow.setAlwaysOnTop(true, 'screen-saver')
+  if (IS_MAC) {
+    bubbleWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    // 不出现在截屏里：微信输入框截屏识别时不会把译文卡片自己也识别进去
+    bubbleWindow.setContentProtection(true)
+  }
   bubbleWindow.setIgnoreMouseEvents(true, { forward: true })
   bubbleWindow.loadURL(rendererUrl('#/bubble'))
   bubbleWindow.on('closed', () => {
@@ -182,7 +225,7 @@ function enableBubbleArrowConfirm() {
   bindBubbleShortcut('Enter', () => sendBubbleAction('confirm'))
 }
 
-function registerBubbleShortcuts(mode: 'selection' | 'screenshot' | 'typing') {
+function registerBubbleShortcuts(mode: 'selection' | 'screenshot' | 'typing', manual = false) {
   unregisterBubbleShortcuts()
   bindBubbleShortcut('Alt+1', () => sendBubbleAction('speak'))
   bindBubbleShortcut('Alt+2', () => sendBubbleAction('replace'))
@@ -202,7 +245,8 @@ function registerBubbleShortcuts(mode: 'selection' | 'screenshot' | 'typing') {
   })
   bindBubbleShortcut('Escape', () => hideInlineTranslation())
 
-  if (mode !== 'typing') {
+  // 自动打字检测时不占用方向键 / 回车（用户还在输入）；快捷键手动触发时可直接回车替换
+  if (mode !== 'typing' || manual) {
     enableBubbleArrowConfirm()
   }
 }
@@ -217,6 +261,8 @@ function hideInlineTranslation() {
 }
 
 function toDipPoint(point: { x: number; y: number }) {
+  // macOS / Linux 的 hook 与 AX 坐标本就是逻辑坐标
+  if (!IS_WIN) return point
   try {
     return screen.screenToDipPoint({
       x: Math.round(point.x),
@@ -232,6 +278,7 @@ function isHookPointPhysical(
   rawPoint: { x: number; y: number },
   cursorDip: { x: number; y: number },
 ): boolean {
+  if (!IS_WIN) return false
   try {
     const cursorPhys = screen.dipToScreenPoint({
       x: Math.round(cursorDip.x),
@@ -313,6 +360,7 @@ async function showInlineResult(payload: {
   loading?: boolean
   error?: boolean
   mode?: 'selection' | 'screenshot' | 'typing'
+  manual?: boolean
 }) {
   const win = ensureBubble()
   const mode = payload.mode || 'selection'
@@ -326,7 +374,7 @@ async function showInlineResult(payload: {
   }
   if (!win.isVisible()) win.showInactive()
   if (!payload.loading && !payload.error && payload.translation) {
-    registerBubbleShortcuts(mode)
+    registerBubbleShortcuts(mode, !!payload.manual)
   } else {
     unregisterBubbleShortcuts()
   }
@@ -338,6 +386,7 @@ async function showTranslationResult(
   source: string,
   translation: string,
   mode: 'selection' | 'screenshot' | 'typing' = 'selection',
+  manual = false,
 ) {
   const approxWidth = Math.min(BUBBLE_MAX_WIDTH, Math.max(168, translation.length * 15 + 124))
   const approxHeight = Math.min(
@@ -345,7 +394,7 @@ async function showTranslationResult(
     Math.max(64, Math.ceil(translation.length / 28) * 23 + 42),
   )
   placeBelowDipRect(anchor, approxWidth, approxHeight)
-  await showInlineResult({ source, translation, mode })
+  await showInlineResult({ source, translation, mode, manual })
 }
 
 function isPointOverOurWindows(point: { x: number; y: number }) {
@@ -403,14 +452,14 @@ async function onGlobalSelection(rawRect: SelectionRect) {
   }
 }
 
-async function onGlobalTypingPause() {
+async function onGlobalTypingPause(hint: { maybeComposing: boolean } = { maybeComposing: false }) {
   if (screenshotActive || Date.now() < ignoreSelectionUntil) return
   if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) return
   const settings = getSettings()
   if (settings.autoTypeTranslate === false) return
   if (translating) return
 
-  const info = await readFocusedInput(process.pid)
+  const info = await readFocusedInput(process.pid, hint)
   if (!info || !info.text) {
     if (lastBubbleMode === 'typing' && bubbleWindow?.isVisible()) {
       lastTypedSourceText = ''
@@ -472,6 +521,8 @@ function createOverlayWindow() {
     hasShadow: false,
     show: false,
     focusable: true,
+    // macOS：允许窗口覆盖菜单栏区域
+    enableLargerThanScreen: true,
     webPreferences: {
       preload: preloadPath(),
       contextIsolation: true,
@@ -480,6 +531,7 @@ function createOverlayWindow() {
     },
   })
   overlayWindow.setAlwaysOnTop(true, 'screen-saver')
+  if (IS_MAC) overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   overlayWindow.loadURL(rendererUrl('#/overlay'))
   overlayWindow.on('closed', () => {
     overlayWindow = null
@@ -496,6 +548,12 @@ function ensureOverlay() {
 }
 
 async function captureDisplayShot() {
+  if (IS_MAC && !macPermissionStatus().screen) {
+    // 未授权时 desktopCapturer 只会返回壁纸；触发一次系统登记后引导用户去授权
+    await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } }).catch(() => [])
+    void shell.openExternal(MAC_PRIVACY_PANES.screen)
+    throw new Error('请在「系统设置 → 隐私与安全性 → 屏幕录制」中允许本应用，然后重启应用')
+  }
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   const scale = display.scaleFactor
   const sources = await desktopCapturer.getSources({
@@ -530,6 +588,10 @@ async function startScreenshotTranslate() {
     const dataUrl = shot.image.toDataURL()
     const start = () => {
       overlay.show()
+      if (IS_MAC) {
+        overlay.setBounds(shot.bounds)
+        app.focus({ steal: true })
+      }
       overlay.focus()
       overlay.webContents.send('overlay-start', { backgroundDataUrl: dataUrl })
     }
@@ -546,38 +608,94 @@ async function startScreenshotTranslate() {
   }
 }
 
+/**
+ * 快捷键手动翻译当前输入框：先走无障碍接口，读不到（如微信）再用「全选 → 复制」读取。
+ * 含中文 → 译成英文（可替换回输入框）；否则英译汉。
+ */
+async function translateFocusedInput() {
+  if (screenshotActive) return
+  const ours = BrowserWindow.getFocusedWindow()
+  if (ours && ours === mainWindow) return
+
+  const seq = ++activeTaskSeq
+  translating = true
+  setSelectionHookSuspended(true)
+  ignoreSelectionUntil = Date.now() + 1500
+  ignoreOutsideUntil = Date.now() + 1500
+  let anchor: ScreenRect | null = null
+  try {
+    hideInlineTranslation()
+    await waitForModifiersReleased()
+    if (seq !== activeTaskSeq) return
+    const info = await readFocusedInput(process.pid, { allowClipboard: true })
+    if (seq !== activeTaskSeq) return
+    const text = info?.text.trim() || ''
+    if (!info || !text) {
+      const cursor = screen.getCursorScreenPoint()
+      placeBelowDipRect({ x: cursor.x, y: cursor.y, width: 1, height: 1 }, 220, 36)
+      await showInlineResult({ source: '', translation: '没有读到输入框内容', error: true, mode: 'typing' })
+      return
+    }
+    anchor = expandToTextLine(info.rect)
+    const toEnglish = /[\u4e00-\u9fff]/.test(text)
+    const mode = toEnglish ? 'typing' : 'selection'
+    lastTypedSourceText = text
+    placeBelowDipRect(anchor, 116, 60)
+    await showInlineResult({ source: text, translation: '…', loading: true, mode })
+    const translation = await translate(text, toEnglish ? 'zh-en' : 'en-zh')
+    if (seq !== activeTaskSeq) return
+    await showTranslationResult(anchor, text, translation, mode, true)
+  } catch (err) {
+    if (seq !== activeTaskSeq) return
+    const msg = err instanceof Error ? err.message : String(err)
+    const cursor = screen.getCursorScreenPoint()
+    placeBelowDipRect(anchor ?? { x: cursor.x, y: cursor.y, width: 1, height: 1 }, 240, 60)
+    await showInlineResult({ source: '', translation: msg, error: true, mode: 'typing' })
+  } finally {
+    if (seq === activeTaskSeq) translating = false
+    setSelectionHookSuspended(false)
+  }
+}
+
 function registerHotkeys() {
-  if (registeredScreenshotHotkey) {
+  for (const accel of registeredHotkeys) {
     try {
-      globalShortcut.unregister(registeredScreenshotHotkey)
+      globalShortcut.unregister(accel)
     } catch {
       /* ignore */
     }
-    registeredScreenshotHotkey = ''
   }
+  registeredHotkeys.clear()
   const settings = getSettings()
-  const accel = settings.screenshotHotkey?.trim()
-  if (!accel) return
-  try {
-    if (globalShortcut.register(accel, () => void startScreenshotTranslate())) {
-      registeredScreenshotHotkey = accel
+  const bindings: [string | undefined, () => void][] = [
+    [settings.screenshotHotkey, () => void startScreenshotTranslate()],
+    [settings.inputTranslateHotkey, () => void translateFocusedInput()],
+  ]
+  for (const [raw, fn] of bindings) {
+    const accel = raw?.trim()
+    if (!accel || registeredHotkeys.has(accel)) continue
+    try {
+      if (globalShortcut.register(accel, fn)) registeredHotkeys.add(accel)
+      else console.error('hotkey already in use', accel)
+    } catch (err) {
+      console.error('hotkey failed', accel, err)
     }
-  } catch (err) {
-    console.error('hotkey failed', accel, err)
   }
 }
 
 function createTray() {
-  const iconPath = path.join(__dirname, '../assets/tray.png')
+  // macOS：*Template.png 会被当作模板图标，自动适配菜单栏浅色 / 深色，并自动加载 @2x
+  const iconPath = path.join(__dirname, IS_MAC ? '../assets/trayTemplate.png' : '../assets/tray.png')
   let icon = nativeImage.createFromPath(iconPath)
+  if (IS_MAC && !icon.isEmpty()) icon.setTemplateImage(true)
   if (icon.isEmpty()) {
     icon = nativeImage.createFromDataURL(
       'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAASElEQVRYR+3XMQEAIAwDsHF/z0GAxMcdpJ1dTQJ4M5kAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/G3Q8gN9DwABHgABvA8BvA8B8AFYDwHwvQfYNwAAAABJRU5ErkJggg==',
     )
   }
-  if (!icon.isEmpty()) icon = icon.resize({ width: 16, height: 16 })
+  if (!IS_MAC && !icon.isEmpty()) icon = icon.resize({ width: 16, height: 16 })
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon)
-  tray.setToolTip('English Tools · 右键打开设置')
+  tray.setToolTip(IS_MAC ? 'English Tools' : 'English Tools · 右键打开设置')
 
   rebuildTray = () => {
     const s = getSettings()
@@ -632,9 +750,18 @@ function registerIpc() {
     if (typeof partial.autoTypeTranslate === 'boolean') {
       setTypingHookEnabled(next.autoTypeTranslate)
     }
-    if (partial.screenshotHotkey !== undefined) registerHotkeys()
+    if (partial.screenshotHotkey !== undefined || partial.inputTranslateHotkey !== undefined) {
+      registerHotkeys()
+    }
     rebuildTray()
     return next
+  })
+
+  ipcMain.handle('permissions:status', () => macPermissionStatus())
+  ipcMain.handle('permissions:open', (_e, kind: MacPermission) => {
+    if (!IS_MAC || !MAC_PRIVACY_PANES[kind]) return
+    if (kind === 'accessibility') systemPreferences.isTrustedAccessibilityClient(true)
+    void shell.openExternal(MAC_PRIVACY_PANES[kind])
   })
 
   ipcMain.handle('clipboard:write', (_e, text: string) => {
@@ -664,6 +791,11 @@ function registerIpc() {
   })
 
   ipcMain.handle('window:minimize', () => mainWindow?.minimize())
+  ipcMain.handle('window:toggle-maximize', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMaximized()) mainWindow.unmaximize()
+    else mainWindow.maximize()
+  })
   ipcMain.handle('window:hide', () => mainWindow?.hide())
   ipcMain.handle('window:close', () => {
     mainWindow?.hide()
@@ -783,17 +915,7 @@ function registerIpc() {
   })
 }
 
-app.whenReady().then(() => {
-  createMainWindow()
-  createBubbleWindow()
-  createTray()
-  registerIpc()
-
-  const settings = getSettings()
-  setSelectionHookEnabled(settings.autoSelectTranslate)
-  setTypingHookEnabled(settings.autoTypeTranslate !== false)
-  registerHotkeys()
-  if (!settings.apiKey?.trim()) showMainWindow()
+function startGlobalHook() {
   try {
     startSelectionHook(
       (rect) => {
@@ -807,12 +929,62 @@ app.whenReady().then(() => {
         hideInlineTranslation()
       },
       () => screen.getCursorScreenPoint(),
-      () => {
-        void onGlobalTypingPause()
+      (hint) => {
+        void onGlobalTypingPause(hint)
       },
     )
   } catch (err) {
     console.error('selection hook failed', err)
+  }
+}
+
+/** macOS 需要「辅助功能」权限才能监听全局鼠标键盘；未授权时弹出系统提示并等待授权后再启动 */
+function startGlobalHookWhenPermitted() {
+  if (!IS_MAC || systemPreferences.isTrustedAccessibilityClient(false)) {
+    startGlobalHook()
+    return
+  }
+  systemPreferences.isTrustedAccessibilityClient(true)
+  showMainWindow()
+  const timer = setInterval(() => {
+    if (!systemPreferences.isTrustedAccessibilityClient(false)) return
+    clearInterval(timer)
+    startGlobalHook()
+  }, 2000)
+}
+
+// 正式版只允许一个实例：重复启动时唤起已有实例的设置窗口
+// （开发模式下 vite 热重启会短暂同时存在新旧两个进程，不加锁）
+const gotInstanceLock = isDev || app.requestSingleInstanceLock()
+if (!gotInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => showMainWindow())
+}
+
+// 任何来源的退出（⌘Q、关机 / 注销、开发服务器重启时的 SIGTERM）都放行，
+// 否则主窗口的「关闭即隐藏」会拦住退出，留下孤儿进程
+app.on('before-quit', () => {
+  quitting = true
+})
+
+app.whenReady().then(() => {
+  if (!gotInstanceLock) return
+  createMainWindow()
+  createBubbleWindow()
+  createTray()
+  registerIpc()
+
+  const settings = getSettings()
+  setSelectionHookEnabled(settings.autoSelectTranslate)
+  setTypingHookEnabled(settings.autoTypeTranslate !== false)
+  registerHotkeys()
+  if (!settings.apiKey?.trim()) showMainWindow()
+  syncDockVisibility()
+  startGlobalHookWhenPermitted()
+  // 预热系统文字识别模型（首次加载中文模型要十几秒），供微信输入框截屏识别使用
+  if (IS_MAC && macScreenOcrAvailable()) {
+    setTimeout(() => void warmUpMacOcr(), 3000)
   }
 
   app.on('activate', () => {

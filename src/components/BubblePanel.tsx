@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
+const ALT = window.englishTools?.platform === 'darwin' ? '⌥' : 'Alt+'
+
 export default function BubblePanel() {
   const [source, setSource] = useState('')
   const [translation, setTranslation] = useState('')
@@ -230,7 +232,7 @@ export default function BubblePanel() {
               className={`inline-copy inline-speak${speaking ? ' is-speaking' : ''}${selectedIndex === 0 ? ' is-selected' : ''}`}
               onMouseEnter={() => setSelectedIndex(0)}
               onClick={() => void toggleSpeak()}
-              title="朗读 (Alt+1)"
+              title={`朗读 (${ALT}1)`}
               aria-label="朗读"
             >
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -261,7 +263,7 @@ export default function BubblePanel() {
               className={`inline-copy${replaced ? ' is-copied' : ''}${selectedIndex === 1 ? ' is-selected' : ''}`}
               onMouseEnter={() => setSelectedIndex(1)}
               onClick={() => void replaceInInput()}
-              title="替换/粘贴到输入框 (Alt+2)"
+              title={`替换/粘贴到输入框 (${ALT}2)`}
               aria-label="替换"
             >
               {replaced ? (
@@ -291,7 +293,7 @@ export default function BubblePanel() {
               className={`inline-copy${copied ? ' is-copied' : ''}${selectedIndex === 2 ? ' is-selected' : ''}`}
               onMouseEnter={() => setSelectedIndex(2)}
               onClick={() => void copy()}
-              title="复制译文 (Alt+3)"
+              title={`复制译文 (${ALT}3)`}
               aria-label="复制"
             >
               {copied ? (

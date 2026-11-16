@@ -1,6 +1,7 @@
 import { clipboard } from 'electron'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { macProbeSelection, macSendCommandKeys } from './macAutomation'
 
 const execFileAsync = promisify(execFile)
 
@@ -18,9 +19,12 @@ function sleep(ms: number) {
  * 4. 仅在普通窗口需要回退 Ctrl+C 时才发送 ^c，且绝不清空或覆盖剪贴板中的图片。
  */
 export async function captureSelectedText(): Promise<string> {
-  if (process.platform !== 'win32') {
-    return clipboard.readText().trim()
+  if (process.platform === 'darwin') return captureSelectedTextMac()
+  if (process.platform === 'linux') {
+    // X11/部分 Wayland 下选中即进入 PRIMARY 选区，无需模拟复制
+    return clipboard.readText('selection').trim()
   }
+  if (process.platform !== 'win32') return ''
 
   const probePs = `
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -83,6 +87,30 @@ Write-Output '__NEED_COPY__'
   }
 
   // 仅当 UIA 未能直接读出文本且确认不是截图工具时，才走非破坏性 Ctrl+C 回退
+  return copySelectionPreservingClipboard(async () => {
+    const copyPs = `
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.SendKeys]::SendWait("^c")
+`
+    await execFileAsync('powershell.exe', ['-NoProfile', '-Command', copyPs], {
+      windowsHide: true,
+      timeout: 2500,
+    })
+  })
+}
+
+/** macOS：先读 AXSelectedText（零剪贴板操作），读不到再回退 Cmd+C */
+async function captureSelectedTextMac(): Promise<string> {
+  const probe = await macProbeSelection()
+  if (probe.kind === 'abort') return ''
+  if (probe.kind === 'text') return probe.text
+  return copySelectionPreservingClipboard(() => macSendCommandKeys('c'))
+}
+
+/**
+ * 发送系统复制快捷键读取选区，读完恢复原剪贴板；剪贴板里是图片时绝不清空或覆盖。
+ */
+export async function copySelectionPreservingClipboard(sendCopy: () => Promise<void>): Promise<string> {
   const previousImage = clipboard.readImage()
   const hadImageBefore = !previousImage.isEmpty()
   const previousText = clipboard.readText()
@@ -103,14 +131,7 @@ Write-Output '__NEED_COPY__'
   }
 
   try {
-    const copyPs = `
-Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.SendKeys]::SendWait("^c")
-`
-    await execFileAsync('powershell.exe', ['-NoProfile', '-Command', copyPs], {
-      windowsHide: true,
-      timeout: 2500,
-    })
+    await sendCopy()
   } catch {
     restorePreviousTextIfNeeded()
     return ''
