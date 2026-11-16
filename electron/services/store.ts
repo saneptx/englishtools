@@ -15,6 +15,8 @@ export interface AppSettings {
   autoSelectTranslate: boolean
   /** 输入法打字上屏后自动汉译英 */
   autoTypeTranslate: boolean
+  /** 手动翻译当前输入框的快捷键（读不到输入框的应用，如微信，用它） */
+  inputTranslateHotkey: string
 }
 
 export interface VocabItem {
@@ -36,10 +38,12 @@ const defaults: AppSettings = {
   baseUrl: 'https://api.deepseek.com',
   model: 'deepseek-chat',
   selectHotkey: 'CommandOrControl+Shift+T',
-  screenshotHotkey: 'CommandOrControl+Shift+S',
+  // macOS 上 Cmd+Shift+S 是常见的「另存为」，改用 Option+Shift+S
+  screenshotHotkey: process.platform === 'darwin' ? 'Alt+Shift+S' : 'CommandOrControl+Shift+S',
   bilingual: true,
   autoSelectTranslate: true,
   autoTypeTranslate: true,
+  inputTranslateHotkey: process.platform === 'darwin' ? 'Alt+T' : 'Control+Alt+T',
 }
 
 export const store = new Store<StoreSchema>({

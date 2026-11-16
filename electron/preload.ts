@@ -12,15 +12,22 @@ export interface AppSettings {
   bilingual: boolean
   autoSelectTranslate: boolean
   autoTypeTranslate: boolean
+  inputTranslateHotkey: string
 }
 
 const api = {
+  platform: process.platform,
+  getPermissions: (): Promise<{ accessibility: boolean; screen: boolean }> =>
+    ipcRenderer.invoke('permissions:status'),
+  openPermissionSettings: (kind: 'accessibility' | 'screen') =>
+    ipcRenderer.invoke('permissions:open', kind),
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
   setSettings: (partial: Partial<AppSettings>): Promise<AppSettings> =>
     ipcRenderer.invoke('settings:set', partial),
   translate: (text: string, direction: TranslateDirection): Promise<string> =>
     ipcRenderer.invoke('translate', text, direction),
   minimize: () => ipcRenderer.invoke('window:minimize'),
+  toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
   hide: () => ipcRenderer.invoke('window:hide'),
   closeWindow: () => ipcRenderer.invoke('window:close'),
   openExternal: (url: string) => ipcRenderer.invoke('window:open-external', url),

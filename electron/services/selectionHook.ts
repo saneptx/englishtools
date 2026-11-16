@@ -1,6 +1,6 @@
 import { uIOhook, UiohookKeyboardEvent, UiohookMouseEvent } from 'uiohook-napi'
 
-/** 划词选区（uiohook 原始屏幕坐标，主进程再转 DIP） */
+/** 划词选区（uiohook 原始屏幕坐标：Windows 可能为物理像素，macOS 为全局点坐标；主进程再转 DIP） */
 export type SelectionRect = {
   x: number
   y: number
@@ -14,7 +14,10 @@ export type SelectionRect = {
 type SelectionHandler = (rect: SelectionRect) => void
 type OutsideClickHandler = (point: { x: number; y: number }) => void
 type CursorReader = () => { x: number; y: number }
-type TypingHandler = () => void
+/** maybeComposing：最后一键是不带 ⌘/Ctrl 的字母，可能仍在输入法拼音组合中（屏幕上还是拼音） */
+type TypingHandler = (info: { maybeComposing: boolean }) => void
+
+const IS_MAC = process.platform === 'darwin'
 
 let started = false
 let down: { x: number; y: number } | null = null
@@ -39,6 +42,30 @@ const IGNORED_KEYCODES = new Set([
   3655, 3657, 3663, 3665, 3666, // Home, PgUp, End, PgDn, Insert
   57416, 57419, 57421, 57424, // Arrow keys
 ])
+
+/** uiohook 键码：Q..P=16..25，A..L=30..38，Z..M=44..50 */
+function isLetterKey(code: number) {
+  return (code >= 16 && code <= 25) || (code >= 30 && code <= 38) || (code >= 44 && code <= 50)
+}
+
+/** Ctrl / Shift / Alt / Meta 左右键 */
+const MODIFIER_KEYCODES = new Set([29, 3613, 42, 54, 56, 3640, 3675, 3676])
+const pressedModifiers = new Set<number>()
+
+/**
+ * 等用户松开快捷键里的修饰键（最多 timeoutMs），
+ * 避免随后模拟的 ⌘A / Ctrl+A 和仍按着的 ⌥ / Alt 组合成别的快捷键（如微信截图）。
+ */
+export async function waitForModifiersReleased(timeoutMs = 1200): Promise<void> {
+  if (!started) return
+  const deadline = Date.now() + timeoutMs
+  while (pressedModifiers.size > 0 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 20))
+  }
+  // 再给系统一点时间处理松键事件
+  await new Promise((r) => setTimeout(r, 40))
+  pressedModifiers.clear()
+}
 
 function clearTypingTimer() {
   if (typingTimer) {
@@ -108,7 +135,12 @@ export function startSelectionHook(
     }, 60)
   })
 
+  uIOhook.on('keyup', (e: UiohookKeyboardEvent) => {
+    pressedModifiers.delete(e.keycode)
+  })
+
   uIOhook.on('keydown', (e: UiohookKeyboardEvent) => {
+    if (MODIFIER_KEYCODES.has(e.keycode)) pressedModifiers.add(e.keycode)
     if (suspended || !typingEnabled || !typingHandler) return
     if (e.keycode === 1) {
       // Escape
@@ -116,15 +148,19 @@ export function startSelectionHook(
       return
     }
     if (IGNORED_KEYCODES.has(e.keycode)) return
-    if (e.altKey || e.metaKey) return
-    // Ctrl 组合键仅放行 Ctrl+V (47) 与 Ctrl+X (45)
-    if (e.ctrlKey && e.keycode !== 47 && e.keycode !== 45) return
+    if (e.altKey) return
+    // 平台的「命令键」组合仅放行粘贴 (V=47) 与剪切 (X=45)：Windows 为 Ctrl，macOS 为 Cmd
+    const cmdKey = IS_MAC ? e.metaKey : e.ctrlKey
+    const otherKey = IS_MAC ? e.ctrlKey : e.metaKey
+    if (otherKey) return
+    if (cmdKey && e.keycode !== 47 && e.keycode !== 45) return
 
+    const maybeComposing = !cmdKey && isLetterKey(e.keycode)
     clearTypingTimer()
     typingTimer = setTimeout(() => {
       typingTimer = null
       if (suspended || !typingEnabled) return
-      void Promise.resolve(typingHandler?.()).catch(() => undefined)
+      void Promise.resolve(typingHandler?.({ maybeComposing })).catch(() => undefined)
     }, 550)
   })
 

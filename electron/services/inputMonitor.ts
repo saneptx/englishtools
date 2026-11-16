@@ -2,6 +2,15 @@ import { clipboard, screen } from 'electron'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { ScreenRect } from './selectionBounds'
+import { macProbeFocusedInput, macSendCommandKeys, macSendKeys } from './macAutomation'
+import { copySelectionPreservingClipboard } from './clipboard'
+import { macReadInputByOcr } from './macScreenOcr'
+
+/**
+ * macOS 上读不到无障碍信息的聊天应用：自动打字检测时改为截屏识别输入框（不发按键、不碰剪贴板）。
+ * 微信 4.x 是 Qt 自绘界面，窗口里只暴露了红绿灯三个按钮。
+ */
+const MAC_OCR_BUNDLES = new Set(['com.tencent.xinWeChat'])
 
 const execFileAsync = promisify(execFile)
 
@@ -42,11 +51,71 @@ function toDipRect(phys: ScreenRect): ScreenRect {
   }
 }
 
+export interface ReadInputOptions {
+  /**
+   * 无障碍接口读不到内容时，允许用「全选 → 复制 → → 键取消全选」读取整段输入（会恢复剪贴板）。
+   * 只在用户主动按快捷键时开启；自动打字检测绝不发按键。
+   */
+  allowClipboard?: boolean
+  /** 最后一键可能仍在输入法组合中：屏幕上还是拼音，截屏识别没有意义 */
+  maybeComposing?: boolean
+}
+
+const DEBUG = !!(process.env.VITE_DEV_SERVER_URL || process.env.ENGLISHTOOLS_DEBUG)
+
+function cursorRect(): ScreenRect {
+  const cur = screen.getCursorScreenPoint()
+  return { x: cur.x, y: cur.y, width: 40, height: 24 }
+}
+
+/** 全选 → 复制 → 右方向键（取消全选，光标落在末尾），读取整段输入并恢复剪贴板 */
+async function copyWholeInput(): Promise<string> {
+  if (process.platform === 'darwin') {
+    return copySelectionPreservingClipboard(() => macSendKeys('cmd:a', 'cmd:c', 'right'))
+  }
+  if (process.platform === 'win32') {
+    return copySelectionPreservingClipboard(async () => {
+      const ps = `
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.SendKeys]::SendWait("^a^c{RIGHT}")
+`
+      await execFileAsync('powershell.exe', ['-NoProfile', '-Command', ps], {
+        windowsHide: true,
+        timeout: 2500,
+      })
+    })
+  }
+  return ''
+}
+
 /**
  * 读取当前焦点输入框中的文本与屏幕位置（DIP 矩形）
  */
-export async function readFocusedInput(ownPid: number): Promise<FocusedInputInfo | null> {
+export async function readFocusedInput(
+  ownPid: number,
+  opts: ReadInputOptions = {},
+): Promise<FocusedInputInfo | null> {
+  if (process.platform === 'darwin') return readFocusedInputMac(ownPid, opts)
   if (process.platform !== 'win32') return null
+  // 自动打字检测不支持微信（Qt 自绘输入框，UIA 读不到内容）；手动快捷键仍可通过复制读取
+  const info = await readFocusedInputWin(ownPid, !opts.allowClipboard)
+  if (info?.text || !opts.allowClipboard) return info
+  const text = await copyWholeInput()
+  if (DEBUG) console.log(`[input] clipboard fallback len=${text.length}`)
+  if (!text) return null
+  return { text, rect: info?.rect ?? cursorRect(), isFullValue: true }
+}
+
+/** Windows 版微信的进程名（4.x 为 Weixin，3.x 为 WeChat） */
+const WIN_WECHAT_PROCS = 'Weixin|WeChat|WeChatAppEx'
+
+async function readFocusedInputWin(
+  ownPid: number,
+  skipWeChat: boolean,
+): Promise<FocusedInputInfo | null> {
+  const skipProcs = `ScreenClippingHost|SnippingTool|Snipaste|PixPin|ShareX|PicPick|Flameshot|FSCapture|obs64|explorer${
+    skipWeChat ? `|${WIN_WECHAT_PROCS}` : ''
+  }`
 
   const ps = `
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -64,7 +133,7 @@ try {
   if ($pidVal -eq ${ownPid}) { exit 0 }
 
   $proc = (Get-Process -Id $pidVal -ErrorAction SilentlyContinue).ProcessName
-  if ($proc -match '^(ScreenClippingHost|SnippingTool|Snipaste|PixPin|ShareX|PicPick|Flameshot|FSCapture|obs64|explorer)$') {
+  if ($proc -match '^(${skipProcs})$') {
     exit 0
   }
 
@@ -208,8 +277,58 @@ try {
 /**
  * 将当前焦点输入框中的中文替换为英文译文（优先使用 ValuePattern，否则自动通过全选粘贴完成并恢复原剪贴板）
  */
+async function readFocusedInputMac(
+  ownPid: number,
+  opts: ReadInputOptions,
+): Promise<FocusedInputInfo | null> {
+  const probe = await macProbeFocusedInput(ownPid)
+  if (DEBUG) {
+    console.log(
+      `[input] ${probe.status} app=${probe.app} (${probe.bundleId}) role=${probe.role || '-'} ` +
+        `len=${probe.text.length} rect=${JSON.stringify(probe.rect)} win=${JSON.stringify(probe.windowRect)}` +
+        (probe.status === 'error' ? ` err=${probe.text.slice(0, 200)}` : ''),
+    )
+  }
+  if (probe.status === 'own' || probe.status === 'secure' || probe.status === 'error') return null
+
+  let text = probe.status === 'ok' ? probe.text : ''
+  let rect = probe.status === 'ok' ? probe.rect : null
+
+  if (!text && opts.allowClipboard) {
+    text = await copyWholeInput()
+    if (DEBUG) console.log(`[input] clipboard fallback len=${text.length}`)
+    rect = null
+  } else if (
+    !text &&
+    probe.status === 'nofocus' &&
+    probe.windowRect &&
+    MAC_OCR_BUNDLES.has(probe.bundleId)
+  ) {
+    if (opts.maybeComposing) return null
+    const ocr = await macReadInputByOcr(probe.windowRect, DEBUG)
+    if (!ocr) return null
+    // 识别到空输入框（如消息刚发出）也返回，让调用方收起旧卡片
+    return { text: ocr.text, rect: ocr.anchor, isFullValue: true }
+  }
+  if (!text && probe.status !== 'ok') return null
+
+  if (rect) {
+    // 较高的多行输入区（聊天框、文档），锚点放在第一行附近，避免跑出屏幕底部
+    if (rect.height > 90) rect = { ...rect, height: 34 }
+  } else if (probe.windowRect) {
+    // 拿不到控件位置（如微信）：聊天应用的输入区在窗口底部，贴着窗口底边显示（放不下时自动翻到上方）
+    const w = probe.windowRect
+    rect = { x: w.x + Math.round(w.width * 0.3), y: w.y + w.height - 8, width: 40, height: 8 }
+  } else {
+    rect = cursorRect()
+  }
+  // macOS 的 AX 坐标就是全局点坐标，与 Electron DIP 一致，无需换算
+  return { text, rect, isFullValue: true }
+}
+
 export async function replaceFocusedInputText(replacement: string): Promise<boolean> {
-  if (process.platform !== 'win32' || !replacement) return false
+  if (!replacement) return false
+  if (process.platform !== 'win32' && process.platform !== 'darwin') return false
 
   const previousImage = clipboard.readImage()
   const hadImageBefore = !previousImage.isEmpty()
@@ -218,15 +337,19 @@ export async function replaceFocusedInputText(replacement: string): Promise<bool
   clipboard.writeText(replacement)
   await sleep(30)
 
-  const ps = `
+  try {
+    if (process.platform === 'darwin') {
+      await macSendCommandKeys('a', 'v')
+    } else {
+      const ps = `
 Add-Type -AssemblyName System.Windows.Forms
 [System.Windows.Forms.SendKeys]::SendWait("^a^v")
 `
-  try {
-    await execFileAsync('powershell.exe', ['-NoProfile', '-Command', ps], {
-      windowsHide: true,
-      timeout: 2500,
-    })
+      await execFileAsync('powershell.exe', ['-NoProfile', '-Command', ps], {
+        windowsHide: true,
+        timeout: 2500,
+      })
+    }
   } catch {
     return false
   }
