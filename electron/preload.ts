@@ -1,4 +1,21 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { LearnVideo, LearnStatus } from './services/learn'
+import type { RecentVideo, FavoriteCue } from './services/store'
+import type { SubtitleCue } from './services/youtube'
+
+export type { LearnVideo, LearnStatus, RecentVideo, FavoriteCue, SubtitleCue }
+export type TranslatedItems = {
+  videoId: string
+  items: { id: string; zh: string; keywords: SubtitleCue['keywords'] }[]
+}
+
+function listen<T>(channel: string, cb: (payload: T) => void): () => void {
+  const listener = (_e: Electron.IpcRendererEvent, payload: T) => cb(payload)
+  ipcRenderer.on(channel, listener)
+  return () => {
+    ipcRenderer.removeListener(channel, listener)
+  }
+}
 
 export type TranslateDirection = 'zh-en' | 'en-zh'
 export type BubbleShortcutAction = 'prev' | 'next' | 'confirm' | 'speak' | 'replace' | 'copy'
@@ -17,6 +34,20 @@ export interface AppSettings {
 
 const api = {
   platform: process.platform,
+  // ── YouTube 学习 ──
+  openLearn: () => ipcRenderer.invoke('learn:open'),
+  learnLoad: (input: string): Promise<LearnVideo> => ipcRenderer.invoke('learn:load', input),
+  learnRecent: (): Promise<RecentVideo[]> => ipcRenderer.invoke('learn:recent'),
+  learnRemoveRecent: (videoId: string): Promise<RecentVideo[]> =>
+    ipcRenderer.invoke('learn:recent:remove', videoId),
+  learnFavorites: (): Promise<FavoriteCue[]> => ipcRenderer.invoke('learn:favorites'),
+  learnToggleFavorite: (item: Omit<FavoriteCue, 'savedAt'>): Promise<boolean> =>
+    ipcRenderer.invoke('learn:favorite:toggle', item),
+  learnLookup: (word: string, context?: string): Promise<string> =>
+    ipcRenderer.invoke('learn:lookup', word, context),
+  onLearnOpenVideo: (cb: (input: string) => void) => listen<string>('learn:open-video', cb),
+  onLearnStatus: (cb: (s: LearnStatus) => void) => listen<LearnStatus>('learn:status', cb),
+  onLearnTranslated: (cb: (p: TranslatedItems) => void) => listen<TranslatedItems>('learn:translated', cb),
   getPermissions: (): Promise<{ accessibility: boolean; screen: boolean }> =>
     ipcRenderer.invoke('permissions:status'),
   openPermissionSettings: (kind: 'accessibility' | 'screen') =>
@@ -28,6 +59,9 @@ const api = {
     ipcRenderer.invoke('translate', text, direction),
   minimize: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
+  // 标题栏拖动：用 send 而不是 invoke，移动时每帧一条，不等返回
+  windowDragStart: () => ipcRenderer.send('window:drag-start'),
+  windowDragMove: (dx: number, dy: number) => ipcRenderer.send('window:drag-move', dx, dy),
   hide: () => ipcRenderer.invoke('window:hide'),
   closeWindow: () => ipcRenderer.invoke('window:close'),
   openExternal: (url: string) => ipcRenderer.invoke('window:open-external', url),

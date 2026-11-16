@@ -27,10 +27,29 @@ export interface VocabItem {
   createdAt: number
 }
 
+export interface RecentVideo {
+  videoId: string
+  title: string
+  author: string
+  openedAt: number
+}
+
+export interface FavoriteCue {
+  key: string
+  videoId: string
+  title: string
+  startMs: number
+  en: string
+  zh: string
+  savedAt: number
+}
+
 export interface StoreSchema {
   settings: AppSettings
   vocabulary: VocabItem[]
   subtitleCache: Record<string, unknown>
+  recentVideos: RecentVideo[]
+  favoriteCues: FavoriteCue[]
 }
 
 const defaults: AppSettings = {
@@ -52,6 +71,8 @@ export const store = new Store<StoreSchema>({
     settings: defaults,
     vocabulary: [],
     subtitleCache: {},
+    recentVideos: [],
+    favoriteCues: [],
   },
 })
 
@@ -97,4 +118,52 @@ export function getSubtitleCache(videoId: string): unknown | null {
 export function setSubtitleCache(videoId: string, data: unknown): void {
   const cache = store.get('subtitleCache') ?? {}
   store.set('subtitleCache', { ...cache, [videoId]: data })
+}
+
+/** 删除最近列表之外的字幕缓存，避免配置文件无限增长 */
+export function pruneSubtitleCache(keepKeys: string[]): void {
+  const cache = store.get('subtitleCache') ?? {}
+  const keep = new Set(keepKeys)
+  const next: Record<string, unknown> = {}
+  for (const k of Object.keys(cache)) if (keep.has(k)) next[k] = cache[k]
+  store.set('subtitleCache', next)
+}
+
+const MAX_RECENT = 20
+
+export function getRecentVideos(): RecentVideo[] {
+  return store.get('recentVideos') ?? []
+}
+
+export function touchRecentVideo(v: Omit<RecentVideo, 'openedAt'>): RecentVideo[] {
+  const list = [{ ...v, openedAt: Date.now() }, ...getRecentVideos().filter((x) => x.videoId !== v.videoId)].slice(
+    0,
+    MAX_RECENT,
+  )
+  store.set('recentVideos', list)
+  return list
+}
+
+export function removeRecentVideo(videoId: string): RecentVideo[] {
+  const list = getRecentVideos().filter((x) => x.videoId !== videoId)
+  store.set('recentVideos', list)
+  return list
+}
+
+export function getFavoriteCues(): FavoriteCue[] {
+  return store.get('favoriteCues') ?? []
+}
+
+/** 收藏 / 取消收藏一句字幕，返回操作后是否为已收藏 */
+export function toggleFavoriteCue(item: Omit<FavoriteCue, 'savedAt'>): boolean {
+  const list = getFavoriteCues()
+  if (list.some((f) => f.key === item.key)) {
+    store.set(
+      'favoriteCues',
+      list.filter((f) => f.key !== item.key),
+    )
+    return false
+  }
+  store.set('favoriteCues', [{ ...item, savedAt: Date.now() }, ...list])
+  return true
 }

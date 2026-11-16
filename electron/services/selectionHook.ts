@@ -1,6 +1,6 @@
-import { uIOhook, UiohookKeyboardEvent, UiohookMouseEvent } from 'uiohook-napi'
+import { createInputSource, type InputSource, type KeyEvt, type MouseEvt } from './inputSource'
 
-/** 划词选区（uiohook 原始屏幕坐标：Windows 可能为物理像素，macOS 为全局点坐标；主进程再转 DIP） */
+/** 划词选区（原始屏幕坐标：Windows 的 uiohook 可能为物理像素，macOS 为全局点坐标；主进程再转 DIP） */
 export type SelectionRect = {
   x: number
   y: number
@@ -20,6 +20,7 @@ type TypingHandler = (info: { maybeComposing: boolean }) => void
 const IS_MAC = process.platform === 'darwin'
 
 let started = false
+let input: InputSource | null = null
 let down: { x: number; y: number } | null = null
 let handler: SelectionHandler | null = null
 let outsideHandler: OutsideClickHandler | null = null
@@ -86,8 +87,9 @@ export function startSelectionHook(
   typingHandler = onTypingPause ?? null
   if (started) return
   started = true
+  input = createInputSource()
 
-  uIOhook.on('mousedown', (e: UiohookMouseEvent) => {
+  input.on('mousedown', (e: MouseEvt) => {
     if (e.button !== 1) return
     clearTypingTimer()
     if (suspended) {
@@ -98,7 +100,7 @@ export function startSelectionHook(
     if (enabled) down = { x: e.x, y: e.y }
   })
 
-  uIOhook.on('mouseup', (e: UiohookMouseEvent) => {
+  input.on('mouseup', (e: MouseEvt) => {
     if (suspended || !enabled || !handler) {
       down = null
       return
@@ -106,6 +108,8 @@ export function startSelectionHook(
     if (e.button !== 1 || !down) return
     const start = down
     down = null
+    // 拖的是窗口标题栏（窗口移动 / 缩放了），不是在选文字：不读选区、不发 ⌘C
+    if (e.windowMoved) return
     const left = Math.min(start.x, e.x)
     const top = Math.min(start.y, e.y)
     const width = Math.abs(e.x - start.x)
@@ -135,11 +139,11 @@ export function startSelectionHook(
     }, 60)
   })
 
-  uIOhook.on('keyup', (e: UiohookKeyboardEvent) => {
+  input.on('keyup', (e: KeyEvt) => {
     pressedModifiers.delete(e.keycode)
   })
 
-  uIOhook.on('keydown', (e: UiohookKeyboardEvent) => {
+  input.on('keydown', (e: KeyEvt) => {
     if (MODIFIER_KEYCODES.has(e.keycode)) pressedModifiers.add(e.keycode)
     if (suspended || !typingEnabled || !typingHandler) return
     if (e.keycode === 1) {
@@ -164,17 +168,14 @@ export function startSelectionHook(
     }, 550)
   })
 
-  uIOhook.start()
+  input.start()
 }
 
 export function stopSelectionHook() {
   if (!started) return
   clearTypingTimer()
-  try {
-    uIOhook.stop()
-  } catch {
-    /* ignore */
-  }
+  input?.stop()
+  input = null
   started = false
   down = null
 }

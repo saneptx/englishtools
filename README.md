@@ -2,7 +2,6 @@
 
 桌面英语学习工具（**Windows / macOS**）：**系统级划词翻译**（任意软件选中英文 → 附近弹出中文）+ 打字时中文自动译英文 + 截图 OCR 翻译。翻译使用 DeepSeek API。
 
-YouTube 沉浸学习后续开发。
 
 ## 功能
 
@@ -11,7 +10,8 @@ YouTube 沉浸学习后续开发。
 3. **截图翻译**：快捷键框选屏幕区域，OCR 识别英文后翻译
 4. **翻译输入框快捷键**（macOS `⌥T` / Windows `Ctrl+Alt+T`）：手动翻译当前输入框全部内容，回车替换为译文。读不到输入框的应用会用「全选 → 复制」读取（恢复剪贴板）
 5. 译文卡片快捷键：朗读 / 替换 / 复制分别为 `Alt+1/2/3`（macOS 为 `⌥1/2/3`），`Esc` 关闭
-6. 可在设置 / 托盘菜单开关「划词翻译」「打字译英」
+6. **YouTube 学习**（托盘菜单 / 设置页打开）：粘贴视频链接，左侧播放视频，右侧是随播放滚动的双语字幕——当前句高亮、逐词跟读描边、AI 标出重点词，点单词查看释义，可收藏句子；`空格` 播放暂停，`← →` 切句，`R` 重播本句
+7. 可在设置 / 托盘菜单开关「划词翻译」「打字译英」
 
 > 说明：划词优先通过系统无障碍接口（Windows UI Automation / macOS Accessibility）直接读取选区，读不到时才回退为「模拟复制 → 读剪贴板 → 恢复剪贴板」。图片/视频内不可选文字请用截图翻译。
 
@@ -45,6 +45,15 @@ bash scripts/mac-ax-probe.sh
 
 Linux 仅做了基础兼容（划词读取 PRIMARY 选区），打字译英与替换暂不支持，未经测试。
 
+## YouTube 学习的字幕来源
+
+1. **YouTube 自带字幕**（大多数视频）：通过 YouTube 移动端接口获取。有人工字幕时用人工字幕的文本（标点准确），并与自动字幕按词对齐借用逐词时间；只有自动字幕时按停顿断句。几秒内即可开始。
+2. **语音识别**（没有英文字幕的视频）：yt-dlp 下载音频 → ffmpeg 转码 → whisper.cpp 本地逐词识别，首次使用自动下载 `ggml-base.en` 模型（约 150MB）。需自行安装工具：
+   - macOS：`brew install yt-dlp ffmpeg whisper-cpp`
+   - Windows：`winget install yt-dlp.yt-dlp Gyan.FFmpeg`，whisper.cpp 从 GitHub Releases 下载并把 `whisper-cli.exe` 加入 PATH
+
+字幕翻译和重点词由 DeepSeek 分批生成（边看边出），结果按视频缓存，再次打开无需重新翻译。最近 20 个视频保留缓存。
+
 ## 开发运行
 
 ```bash
@@ -53,6 +62,8 @@ npm run dev
 ```
 
 首次在「设置」填写 DeepSeek API Key。关闭主窗口会隐藏到托盘 / 菜单栏，从菜单中「退出」才真正退出。
+
+调试时可用 `ENGLISHTOOLS_OPEN_LEARN=<视频链接或ID>` 启动，直接打开学习窗口并加载该视频。
 
 `npm install` 后 `scripts/ensure-electron.js` 会检查 Electron 二进制是否完整（macOS 上 extract-zip 偶尔会丢 Framework），不完整时自动从缓存修复。
 

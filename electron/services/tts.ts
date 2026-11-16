@@ -311,13 +311,54 @@ function requestEdgeTtsOnce(text: string, voice: string): Promise<{ dataUrl?: st
  * 使用微软 Edge Neural TTS (en-US-JennyNeural) 合成高自然度美式英语语音，返回 base64 DataURL；
  * 若失败则返回 null，不向控制台抛出未捕获 IPC 异常。
  */
+/** Edge 接口失败（如 403）后暂停一段时间，避免每次朗读都白等两秒再退回系统语音 */
+let edgeDisabledUntil = 0
+const EDGE_BACKOFF_MS = 10 * 60 * 1000
+
+function remember(key: string, dataUrl: string) {
+  if (audioCache.size >= MAX_CACHE_ENTRIES) {
+    const oldestKey = audioCache.keys().next().value
+    if (oldestKey) audioCache.delete(oldestKey)
+  }
+  audioCache.set(key, dataUrl)
+}
+
+/** 单词 / 短语：有道词典美式发音（真人词典音，比合成语音更适合查词） */
+async function fetchDictionaryPronunciation(text: string): Promise<string | null> {
+  const key = `dict:${text.toLowerCase()}`
+  const cached = audioCache.get(key)
+  if (cached) return cached
+  try {
+    const res = await fetch(
+      `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(text)}&type=2`,
+      { signal: AbortSignal.timeout(6000) },
+    )
+    const type = res.headers.get('content-type') || ''
+    if (!res.ok || !type.startsWith('audio')) return null
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (buf.length < 500) return null
+    const dataUrl = `data:${type.split(';')[0]};base64,${buf.toString('base64')}`
+    remember(key, dataUrl)
+    return dataUrl
+  } catch {
+    return null
+  }
+}
+
 export async function synthesizeEdgeTts(rawText: string, voice = DEFAULT_VOICE): Promise<string | null> {
   const text = cleanTextForSpeech(rawText)
   if (!text) return null
 
+  // 4 个词以内当作查词，用词典发音
+  if (text.split(' ').length <= 4 && text.length <= 40) {
+    const dict = await fetchDictionaryPronunciation(text)
+    if (dict) return dict
+  }
+
   const cacheKey = `${voice}:${text}`
   const cached = audioCache.get(cacheKey)
   if (cached) return cached
+  if (Date.now() < edgeDisabledUntil) return null
 
   try {
     let res = await requestEdgeTtsOnce(text, voice)
@@ -325,15 +366,14 @@ export async function synthesizeEdgeTts(rawText: string, voice = DEFAULT_VOICE):
       res = await requestEdgeTtsOnce(text, voice)
     }
     const dataUrl = res.dataUrl
-    if (!dataUrl) return null
-
-    if (audioCache.size >= MAX_CACHE_ENTRIES) {
-      const oldestKey = audioCache.keys().next().value
-      if (oldestKey) audioCache.delete(oldestKey)
+    if (!dataUrl) {
+      edgeDisabledUntil = Date.now() + EDGE_BACKOFF_MS
+      return null
     }
-    audioCache.set(cacheKey, dataUrl)
+    remember(cacheKey, dataUrl)
     return dataUrl
   } catch {
+    edgeDisabledUntil = Date.now() + EDGE_BACKOFF_MS
     return null
   }
 }

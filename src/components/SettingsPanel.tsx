@@ -240,6 +240,18 @@ export default function SettingsPanel() {
           </div>
         )}
 
+        <Section title="学习">
+          <div className="row-item">
+            <div className="row-text">
+              <div className="row-title">YouTube 学习</div>
+              <div className="row-desc">粘贴视频链接，生成逐词同步的双语字幕</div>
+            </div>
+            <button type="button" className="btn btn-small" onClick={() => void window.englishTools.openLearn()}>
+              打开
+            </button>
+          </div>
+        </Section>
+
         <Section title="翻译">
           <div className="row-item">
             <div className="row-text">

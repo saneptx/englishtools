@@ -9,7 +9,9 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "postinstall": "node scripts/ensure-electron.js"
+    "postinstall": "node scripts/ensure-electron.js && node scripts/build-mac-helper.js",
+    "build:mac-helper": "node scripts/build-mac-helper.js",
+    "predev": "node scripts/build-mac-helper.js"
   },
   "dependencies": {
     "electron-store": "^8.2.0",

@@ -10,6 +10,7 @@ import {
   clipboard,
   globalShortcut,
   desktopCapturer,
+  session,
   systemPreferences,
   nativeTheme,
   type NativeImage,
@@ -19,9 +20,15 @@ import path from 'node:path'
 import {
   getSettings,
   setSettings,
+  getRecentVideos,
+  removeRecentVideo,
+  getFavoriteCues,
+  toggleFavoriteCue,
   type AppSettings,
+  type FavoriteCue,
 } from './services/store'
-import { translate } from './services/deepseek'
+import { translate, lookupWord } from './services/deepseek'
+import { loadLearnVideo, cancelLearnJob } from './services/learn'
 import { captureSelectedText } from './services/clipboard'
 import { ocrFromDataUrl } from './services/ocr'
 import { synthesizeEdgeTts } from './services/tts'
@@ -47,6 +54,7 @@ const BUBBLE_MIN_HEIGHT = 56
 const BUBBLE_MAX_HEIGHT = 260
 
 let mainWindow: BrowserWindow | null = null
+let learnWindow: BrowserWindow | null = null
 let bubbleWindow: BrowserWindow | null = null
 let overlayWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -89,7 +97,7 @@ function macPermissionStatus() {
 /** macOS 托盘常驻：只有设置窗口可见时才显示 Dock 图标（同时提供 Edit 菜单让 Cmd+C/V 在输入框可用） */
 function syncDockVisibility() {
   if (!IS_MAC || !app.dock) return
-  const visible = !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()
+  const visible = [mainWindow, learnWindow].some((w) => !!w && !w.isDestroyed() && w.isVisible())
   if (visible) void app.dock.show()
   else app.dock.hide()
 }
@@ -145,6 +153,51 @@ function showMainWindow() {
   mainWindow?.show()
   if (IS_MAC) app.focus({ steal: true })
   mainWindow?.focus()
+}
+
+/** YouTube 学习窗口：上方播放器，下方 / 右侧随播放滚动的双语字幕 */
+function showLearnWindow(initialVideo?: string) {
+  if (learnWindow && !learnWindow.isDestroyed()) {
+    if (initialVideo) learnWindow.webContents.send('learn:open-video', initialVideo)
+    if (learnWindow.isMinimized()) learnWindow.restore()
+    learnWindow.show()
+    if (IS_MAC) app.focus({ steal: true })
+    learnWindow.focus()
+    return
+  }
+  learnWindow = new BrowserWindow({
+    width: 1080,
+    height: 760,
+    minWidth: 420,
+    minHeight: 560,
+    show: false,
+    frame: IS_MAC,
+    ...(IS_MAC
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 12 } }
+      : {}),
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f2f2f7',
+    title: 'YouTube 学习',
+    webPreferences: {
+      preload: preloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  })
+  learnWindow.loadURL(
+    rendererUrl(initialVideo ? `#/learn?v=${encodeURIComponent(initialVideo)}` : '#/learn'),
+  )
+  learnWindow.once('ready-to-show', () => {
+    learnWindow?.show()
+    if (IS_MAC) app.focus({ steal: true })
+  })
+  learnWindow.on('show', syncDockVisibility)
+  learnWindow.on('hide', syncDockVisibility)
+  learnWindow.on('closed', () => {
+    learnWindow = null
+    cancelLearnJob()
+    syncDockVisibility()
+  })
 }
 
 function createBubbleWindow() {
@@ -398,7 +451,7 @@ async function showTranslationResult(
 }
 
 function isPointOverOurWindows(point: { x: number; y: number }) {
-  for (const win of [bubbleWindow, mainWindow]) {
+  for (const win of [bubbleWindow, mainWindow, learnWindow]) {
     if (!win || win.isDestroyed() || !win.isVisible()) continue
     const b = win.getBounds()
     if (
@@ -701,6 +754,10 @@ function createTray() {
     const s = getSettings()
     const menu = Menu.buildFromTemplate([
       {
+        label: 'YouTube 学习',
+        click: () => showLearnWindow(),
+      },
+      {
         label: '设置',
         click: () => showMainWindow(),
       },
@@ -790,16 +847,54 @@ function registerIpc() {
     return synthesizeEdgeTts(text)
   })
 
-  ipcMain.handle('window:minimize', () => mainWindow?.minimize())
-  ipcMain.handle('window:toggle-maximize', () => {
-    if (!mainWindow) return
-    if (mainWindow.isMaximized()) mainWindow.unmaximize()
-    else mainWindow.maximize()
+  // 窗口按钮作用于发出请求的那个窗口（设置窗口 / 学习窗口）
+  const senderWindow = (e: Electron.IpcMainInvokeEvent) => BrowserWindow.fromWebContents(e.sender)
+  ipcMain.handle('window:minimize', (e) => senderWindow(e)?.minimize())
+  ipcMain.handle('window:toggle-maximize', (e) => {
+    const win = senderWindow(e)
+    if (!win) return
+    if (win.isMaximized()) win.unmaximize()
+    else win.maximize()
+  })
+  // 自己实现的标题栏拖动：记下按下时的窗口位置，之后按鼠标位移设置新位置
+  const dragOrigin = new Map<number, [number, number]>()
+  ipcMain.on('window:drag-start', (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!win || win.isMaximized() || win.isFullScreen()) return
+    dragOrigin.set(e.sender.id, win.getPosition() as [number, number])
+  })
+  ipcMain.on('window:drag-move', (e, dx: number, dy: number) => {
+    const origin = dragOrigin.get(e.sender.id)
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!origin || !win) return
+    win.setPosition(Math.round(origin[0] + dx), Math.round(origin[1] + dy))
   })
   ipcMain.handle('window:hide', () => mainWindow?.hide())
-  ipcMain.handle('window:close', () => {
-    mainWindow?.hide()
+  ipcMain.handle('window:close', (e) => {
+    const win = senderWindow(e)
+    // 设置窗口关闭即隐藏到托盘；学习窗口直接关闭
+    if (!win || win === mainWindow) mainWindow?.hide()
+    else win.close()
   })
+
+  ipcMain.handle('learn:open', () => showLearnWindow())
+  ipcMain.handle('learn:load', (e, input: string) => {
+    const wc = e.sender
+    const send = (channel: string, payload: unknown) => {
+      if (!wc.isDestroyed()) wc.send(channel, payload)
+    }
+    return loadLearnVideo(input, {
+      status: (st) => send('learn:status', st),
+      translated: (videoId, items) => send('learn:translated', { videoId, items }),
+    })
+  })
+  ipcMain.handle('learn:recent', () => getRecentVideos())
+  ipcMain.handle('learn:recent:remove', (_e, videoId: string) => removeRecentVideo(videoId))
+  ipcMain.handle('learn:favorites', () => getFavoriteCues())
+  ipcMain.handle('learn:favorite:toggle', (_e, item: Omit<FavoriteCue, 'savedAt'>) =>
+    toggleFavoriteCue(item),
+  )
+  ipcMain.handle('learn:lookup', (_e, word: string, context?: string) => lookupWord(word, context))
   ipcMain.handle('window:open-external', (_e, url: string) => shell.openExternal(url))
   ipcMain.handle('bubble:ignore-mouse', (_e, ignore: boolean) => {
     if (!bubbleWindow || bubbleWindow.isDestroyed()) return
@@ -968,8 +1063,26 @@ app.on('before-quit', () => {
   quitting = true
 })
 
+/**
+ * YouTube 内嵌播放器要求请求带 Referer（否则报错 153）。
+ * 打包后页面是 file:// 没有 Referer，这里给 YouTube 相关请求补上。
+ */
+function patchYouTubeReferer() {
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ['https://www.youtube.com/*', 'https://www.youtube-nocookie.com/*'] },
+    (details, callback) => {
+      const headers = details.requestHeaders
+      if (!headers.Referer || headers.Referer.startsWith('file:')) {
+        headers.Referer = 'https://www.youtube.com/'
+      }
+      callback({ requestHeaders: headers })
+    },
+  )
+}
+
 app.whenReady().then(() => {
   if (!gotInstanceLock) return
+  patchYouTubeReferer()
   createMainWindow()
   createBubbleWindow()
   createTray()
@@ -982,6 +1095,8 @@ app.whenReady().then(() => {
   if (!settings.apiKey?.trim()) showMainWindow()
   syncDockVisibility()
   startGlobalHookWhenPermitted()
+  // 开发调试：ENGLISHTOOLS_OPEN_LEARN=<视频链接或 ID> 启动后直接打开学习窗口
+  if (process.env.ENGLISHTOOLS_OPEN_LEARN) showLearnWindow(process.env.ENGLISHTOOLS_OPEN_LEARN)
   // 预热系统文字识别模型（首次加载中文模型要十几秒），供微信输入框截屏识别使用
   if (IS_MAC && macScreenOcrAvailable()) {
     setTimeout(() => void warmUpMacOcr(), 3000)
