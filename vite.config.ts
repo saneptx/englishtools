@@ -16,7 +16,6 @@ export default defineConfig({
               external: [
                 'electron',
                 'electron-store',
-                'tesseract.js',
                 'uiohook-napi',
               ],
             },

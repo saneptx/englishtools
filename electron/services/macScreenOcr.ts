@@ -60,9 +60,9 @@ function dir() {
   return workDir
 }
 
-type Observation = { t: string; x: number; y: number; w: number; h: number }
+export type Observation = { t: string; x: number; y: number; w: number; h: number }
 
-async function visionOcr(pngPath: string): Promise<Observation[]> {
+export async function visionOcr(pngPath: string): Promise<Observation[]> {
   const { stdout } = await execFileAsync(
     'osascript',
     ['-l', 'JavaScript', join(dir(), 'vision.js'), pngPath],
