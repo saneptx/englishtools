@@ -38,6 +38,14 @@ function loadCert() {
 
 const run = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
 
+/** 当前用户的钥匙串搜索列表（security 输出的每行是带引号的路径） */
+function listKeychains() {
+  return run('security', ['list-keychains', '-d', 'user'])
+    .split('\n')
+    .map((l) => l.trim().replace(/^"|"$/g, ''))
+    .filter(Boolean)
+}
+
 exports.default = async function afterSign(context) {
   if (context.electronPlatformName !== 'darwin') return
   const cert = loadCert()
@@ -51,6 +59,10 @@ exports.default = async function afterSign(context) {
   const keychain = path.join(tmp, 'sign.keychain-db')
   const kcPassword = crypto.randomBytes(16).toString('hex')
   const p12File = path.join(tmp, 'cert.p12')
+  // CI 上 codesign 只在「钥匙串搜索列表」里找私钥（--keychain 只是缩小范围），不加进去会报 no identity found。
+  // 本机打包不需要，也不去改动用户的搜索列表；CI 机器用完即弃，签完仍会恢复原列表。
+  const useSearchList = !!process.env.CI
+  let originalSearchList = null
   try {
     fs.writeFileSync(p12File, cert.p12, { mode: 0o600 })
     run('security', ['create-keychain', '-p', kcPassword, keychain])
@@ -59,6 +71,10 @@ exports.default = async function afterSign(context) {
     run('security', ['import', p12File, '-k', keychain, '-P', cert.password, '-T', '/usr/bin/codesign'])
     // 允许 codesign 直接使用私钥，不弹钥匙串授权框
     run('security', ['set-key-partition-list', '-S', 'apple-tool:,apple:', '-s', '-k', kcPassword, keychain])
+    if (useSearchList) {
+      originalSearchList = listKeychains()
+      run('security', ['list-keychains', '-d', 'user', '-s', keychain, ...originalSearchList])
+    }
 
     // 自签名证书不受信任，不能加 -v；取第一个代码签名身份的 SHA-1
     const m = run('security', ['find-identity', '-p', 'codesigning', keychain]).match(/\b([0-9A-F]{40})\b/)
@@ -75,6 +91,13 @@ exports.default = async function afterSign(context) {
     run('codesign', ['--verify', '--deep', '--strict', appPath])
     console.log(`[mac-sign] 已用自签名证书签名 ${path.basename(appPath)} (${path.basename(context.appOutDir)})`)
   } finally {
+    if (originalSearchList) {
+      try {
+        run('security', ['list-keychains', '-d', 'user', '-s', ...originalSearchList])
+      } catch {
+        /* ignore */
+      }
+    }
     try {
       run('security', ['delete-keychain', keychain])
     } catch {
