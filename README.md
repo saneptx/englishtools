@@ -64,7 +64,12 @@ Linux 仅做了基础兼容（划词读取 PRIMARY 选区），打字译英与�
 - Windows：`English Tools Setup x.y.z.exe` 安装包，或 `-win.zip` 免安装版（解压后运行 `English Tools.exe`）
 
 安装包未做代码签名：
-- macOS 首次打开若提示「无法验证开发者」，在「系统设置 → 隐私与安全性」底部点「仍要打开」；从网上下载的 dmg 若提示「已损坏」，运行 `xattr -cr "/Applications/English Tools.app"`
+- macOS：从 GitHub 下载的 dmg 带有「隔离」标记，而安装包只做了 ad-hoc 签名、没有经过苹果公证，Gatekeeper 会拒绝打开（提示「已损坏」「无法验证开发者」或点了没反应）。拖进「应用程序」后在终端运行一次：
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/English Tools.app"
+  ```
+  要彻底免去这一步，需要用 Apple 开发者账号（付费）做 Developer ID 签名和公证。
+- macOS 最低支持 13（Ventura）；Intel 与 Apple Silicon 分别下载对应的 dmg
 - Windows 若弹出 SmartScreen，点「更多信息 → 仍要运行」
 
 安装版的权限记在 English Tools 名下（不再是终端）。设置页「通用 → 开机自动启动」可设为登录后在后台启动。

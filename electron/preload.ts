@@ -51,6 +51,7 @@ const api = {
   getAutostart: (): Promise<{ supported: boolean; enabled: boolean }> => ipcRenderer.invoke('autostart:get'),
   setAutostart: (enabled: boolean): Promise<{ supported: boolean; enabled: boolean }> =>
     ipcRenderer.invoke('autostart:set', enabled),
+  relaunchApp: () => ipcRenderer.invoke('app:relaunch'),
   getPermissions: (): Promise<{ accessibility: boolean; screen: boolean }> =>
     ipcRenderer.invoke('permissions:status'),
   openPermissionSettings: (kind: 'accessibility' | 'screen') =>

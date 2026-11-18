@@ -17,6 +17,8 @@ import {
   type Rectangle,
 } from 'electron'
 import path from 'node:path'
+import fs from 'node:fs'
+import http from 'node:http'
 import {
   getSettings,
   setSettings,
@@ -106,8 +108,64 @@ function preloadPath() {
   return path.join(__dirname, 'preload.js')
 }
 
+/**
+ * 打包后用本机 HTTP 服务（只监听 127.0.0.1）提供界面，而不是 file://：
+ * YouTube 内嵌播放器要求页面有 http(s) 来源，file:// 或自定义协议下会报错 152/153，视频一片黑。
+ */
+let rendererOrigin = ''
+
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+}
+
+function startRendererServer(): Promise<void> {
+  const root = path.join(__dirname, '../dist')
+  const server = http.createServer((req, res) => {
+    let rel = '/'
+    try {
+      rel = decodeURIComponent(new URL(req.url || '/', 'http://localhost').pathname)
+    } catch {
+      /* 非法地址按首页处理 */
+    }
+    const file = path.join(root, rel === '/' ? 'index.html' : rel)
+    if (!file.startsWith(root + path.sep)) {
+      res.writeHead(403).end()
+      return
+    }
+    fs.readFile(file, (err, data) => {
+      if (err) {
+        res.writeHead(404).end()
+        return
+      }
+      res.writeHead(200, {
+        'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
+        'Cache-Control': 'no-cache',
+      })
+      res.end(data)
+    })
+  })
+  return new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address()
+      if (addr && typeof addr === 'object') rendererOrigin = `http://127.0.0.1:${addr.port}`
+      resolve()
+    })
+  })
+}
+
 function rendererUrl(hash = '') {
   if (isDev) return `${process.env.VITE_DEV_SERVER_URL}${hash}`
+  if (rendererOrigin) return `${rendererOrigin}/${hash}`
   const file = path.join(__dirname, '../dist/index.html')
   return hash ? `file://${file}${hash}` : `file://${file}`
 }
@@ -815,6 +873,12 @@ function registerIpc() {
   })
 
   ipcMain.handle('permissions:status', () => macPermissionStatus())
+  // 屏幕录制等权限要重启后才生效
+  ipcMain.handle('app:relaunch', () => {
+    quitting = true
+    app.relaunch()
+    app.exit(0)
+  })
 
   // 开机自启：由系统登录项管理（macOS 登录项 / Windows 启动项），不存配置文件。
   // 开发模式下会把裸 Electron 注册成启动项，所以只在打包后的正式版开放。
@@ -1092,9 +1156,12 @@ function patchYouTubeReferer() {
   )
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!gotInstanceLock) return
   patchYouTubeReferer()
+  if (!isDev) {
+    await startRendererServer().catch((err) => console.error('[renderer] 本地服务启动失败，退回 file://', err))
+  }
   createMainWindow()
   createBubbleWindow()
   createTray()

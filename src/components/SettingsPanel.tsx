@@ -253,6 +253,19 @@ export default function SettingsPanel() {
                 </button>
               </div>
             )}
+            <div className="notice-foot">
+              <span>
+                已打开开关仍提示未授权？这是更新后的新版本与旧授权不匹配：在系统设置的列表里选中 English Tools
+                点「−」删除，再重新授权，然后重启应用。
+              </span>
+              <button
+                type="button"
+                className="btn btn-small secondary"
+                onClick={() => void window.englishTools.relaunchApp()}
+              >
+                重启应用
+              </button>
+            </div>
           </div>
         )}
 
