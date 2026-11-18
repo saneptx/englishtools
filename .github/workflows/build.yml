@@ -43,6 +43,9 @@ jobs:
           # 不自动发布，只生成本地文件
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          # macOS 自签名证书（scripts/mac-sign.js）：固定签名，更新后不用重新授权权限。未配置时退回 ad-hoc
+          MAC_SIGN_P12_BASE64: ${{ secrets.MAC_SIGN_P12_BASE64 }}
+          MAC_SIGN_PASSWORD: ${{ secrets.MAC_SIGN_PASSWORD }}
 
       - uses: actions/upload-artifact@v4
         with:

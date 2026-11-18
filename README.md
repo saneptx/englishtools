@@ -69,6 +69,7 @@ Linux 仅做了基础兼容（划词读取 PRIMARY 选区），打字译英与�
   xattr -dr com.apple.quarantine "/Applications/English Tools.app"
   ```
   要彻底免去这一步，需要用 Apple 开发者账号（付费）做 Developer ID 签名和公证。
+- macOS 安装包用固定的自签名证书签名（见下方「macOS 签名证书」），更新版本后辅助功能 / 屏幕录制权限依然有效；从旧的 ad-hoc 版本升级上来时需要最后一次重新授权
 - macOS 最低支持 13（Ventura）；Intel 与 Apple Silicon 分别下载对应的 dmg
 - Windows 若弹出 SmartScreen，点「更多信息 → 仍要运行」
 
@@ -80,6 +81,14 @@ Linux 仅做了基础兼容（划词读取 PRIMARY 选区），打字译英与�
 npm run dist:mac   # macOS：release/*.dmg（需 Xcode 命令行工具，用于编译输入监听辅助程序）
 npm run dist:win   # Windows 上运行：release/*.exe 安装包 + *.zip 免安装版
 ```
+
+### macOS 签名证书
+
+ad-hoc 签名每次打包指纹都不同，系统会把新版本当成另一个 App，权限随之失效。打包时 `scripts/mac-sign.js`（electron-builder 的 afterSign 钩子）会改用一张固定的自签名代码签名证书重新签名，系统按「Bundle ID + 证书」识别，更新后权限保留。证书导入临时钥匙串，签完即删，不改动登录钥匙串。
+
+- 本地打包：证书放在 `~/.englishtools-signing/cert.p12`，密码在同目录 `password.txt`（不在仓库里）
+- GitHub Actions：在仓库 **Settings → Secrets and variables → Actions** 添加 `MAC_SIGN_P12_BASE64`（`base64 -i ~/.englishtools-signing/cert.p12` 的输出）和 `MAC_SIGN_PASSWORD`
+- 找不到证书时退回 ad-hoc 签名并打印提示。**证书务必备份且不要更换**，换证书等于换了身份，所有用户都要重新授权
 
 在 Apple Silicon Mac 上交叉打包 Windows 只能生成 zip 免安装版：NSIS 安装包的编译器是 Intel 程序，需要先安装 Rosetta（`softwareupdate --install-rosetta`）。
 

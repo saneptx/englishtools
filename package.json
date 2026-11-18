@@ -43,6 +43,7 @@
   "build": {
     "appId": "com.englishtools.app",
     "productName": "English Tools",
+    "afterSign": "scripts/mac-sign.js",
     "copyright": "MIT",
     "directories": {
       "output": "release",
