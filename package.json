@@ -90,6 +90,7 @@
         "NSScreenCaptureUsageDescription": "English Tools 需要录制屏幕用于截图翻译和识别微信输入框。"
       },
       "files": [
+        "package.json",
         "!**/node_modules/uiohook-napi/**"
       ]
     },
