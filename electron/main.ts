@@ -26,6 +26,14 @@ import {
   removeRecentVideo,
   getFavoriteCues,
   toggleFavoriteCue,
+  getVocabulary,
+  toggleVocabulary,
+  removeVocabulary,
+  updateVocabulary,
+  getLearnPrefs,
+  setLearnPrefs,
+  type VocabItem,
+  type LearnPrefs,
   type AppSettings,
   type FavoriteCue,
 } from './services/store'
@@ -970,6 +978,14 @@ function registerIpc() {
   ipcMain.handle('learn:favorite:toggle', (_e, item: Omit<FavoriteCue, 'savedAt'>) =>
     toggleFavoriteCue(item),
   )
+  ipcMain.handle('vocab:list', () => getVocabulary())
+  ipcMain.handle('vocab:toggle', (_e, item: Omit<VocabItem, 'id' | 'createdAt'>) => toggleVocabulary(item))
+  ipcMain.handle('vocab:update', (_e, word: string, patch: Partial<Pick<VocabItem, 'meaning' | 'detail'>>) =>
+    updateVocabulary(word, patch),
+  )
+  ipcMain.handle('vocab:remove', (_e, id: string) => removeVocabulary(id))
+  ipcMain.handle('learn:prefs', () => getLearnPrefs())
+  ipcMain.handle('learn:prefs:set', (_e, partial: Partial<LearnPrefs>) => setLearnPrefs(partial))
   ipcMain.handle('learn:lookup', (_e, word: string, context?: string) => lookupWord(word, context))
   ipcMain.handle('window:open-external', (_e, url: string) => shell.openExternal(url))
   ipcMain.handle('bubble:ignore-mouse', (_e, ignore: boolean) => {

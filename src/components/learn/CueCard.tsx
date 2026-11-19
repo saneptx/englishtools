@@ -10,7 +10,7 @@ export function formatTime(ms: number) {
   return `${h ? `${h}:` : ''}${mm}:${String(s).padStart(2, '0')}`
 }
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9']/g, '').replace(/'/g, '')
+export const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9']/g, '').replace(/'/g, '')
 
 /** 每个词属于哪个重点词（短语按连续词匹配），返回 词序号 → 释义 */
 function keywordMap(cue: SubtitleCue): Map<number, { word: string; meaning: string }> {
@@ -43,12 +43,14 @@ interface Props {
   wordIndex: number
   showZh: boolean
   favorite: boolean
+  /** 已收藏的生词（norm 后），在字幕里加下划线标出 */
+  savedWords: Set<string>
   onSeek: (cue: SubtitleCue) => void
   onWord: (w: WordClick) => void
   onFavorite: (cue: SubtitleCue) => void
 }
 
-function CueCardImpl({ cue, active, wordIndex, showZh, favorite, onSeek, onWord, onFavorite }: Props) {
+function CueCardImpl({ cue, active, wordIndex, showZh, favorite, savedWords, onSeek, onWord, onFavorite }: Props) {
   const kw = useMemo(() => keywordMap(cue), [cue])
 
   return (
@@ -85,7 +87,7 @@ function CueCardImpl({ cue, active, wordIndex, showZh, favorite, onSeek, onWord,
             <span key={i} className={`wp${active ? state.replace('is-current', 'is-past') : ''}`}>
               {lead}
               <span
-                className={`w${state}${k ? ' is-kw' : ''}`}
+                className={`w${state}${k ? ' is-kw' : ''}${savedWords.has(norm(w.t)) ? ' is-saved' : ''}`}
                 onClick={(e) => {
                   e.stopPropagation()
                   onWord({ cue, index: i, keyword: k, rect: e.currentTarget.getBoundingClientRect() })

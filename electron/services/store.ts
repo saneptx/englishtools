@@ -32,9 +32,23 @@ export interface AppSettings {
 export interface VocabItem {
   id: string
   word: string
+  /** 简短释义（AI 标注的词义，或查词结果的第一行） */
   meaning: string
+  /** 完整查词结果 */
+  detail?: string
+  /** 出现的原句及译文 */
   context?: string
+  contextZh?: string
+  /** 来源视频，用于跳回原句 */
+  videoId?: string
+  title?: string
+  startMs?: number
   createdAt: number
+}
+
+export interface LearnPrefs {
+  /** 播放速度 */
+  rate: number
 }
 
 export interface RecentVideo {
@@ -60,6 +74,7 @@ export interface StoreSchema {
   subtitleCache: Record<string, unknown>
   recentVideos: RecentVideo[]
   favoriteCues: FavoriteCue[]
+  learnPrefs: LearnPrefs
 }
 
 const defaults: AppSettings = {
@@ -83,6 +98,7 @@ export const store = new Store<StoreSchema>({
     subtitleCache: {},
     recentVideos: [],
     favoriteCues: [],
+    learnPrefs: { rate: 1 },
   },
 })
 
@@ -113,11 +129,40 @@ export function addVocabulary(item: Omit<VocabItem, 'id' | 'createdAt'>): VocabI
   return created
 }
 
-export function removeVocabulary(id: string): void {
-  store.set(
-    'vocabulary',
-    getVocabulary().filter((v) => v.id !== id),
+export function removeVocabulary(id: string): VocabItem[] {
+  const next = getVocabulary().filter((v) => v.id !== id)
+  store.set('vocabulary', next)
+  return next
+}
+
+/** 收藏 / 取消收藏生词（按单词去重，不区分大小写），返回最新列表 */
+export function toggleVocabulary(item: Omit<VocabItem, 'id' | 'createdAt'>): VocabItem[] {
+  const list = getVocabulary()
+  const existing = list.find((v) => v.word.toLowerCase() === item.word.toLowerCase())
+  if (existing) return removeVocabulary(existing.id)
+  addVocabulary(item)
+  return getVocabulary()
+}
+
+/** 补全已收藏生词的释义（收藏时查词结果还没返回的情况） */
+export function updateVocabulary(word: string, patch: Partial<Pick<VocabItem, 'meaning' | 'detail'>>): VocabItem[] {
+  const list = getVocabulary().map((v) =>
+    v.word.toLowerCase() === word.toLowerCase()
+      ? { ...v, meaning: v.meaning || patch.meaning || '', detail: v.detail || patch.detail }
+      : v,
   )
+  store.set('vocabulary', list)
+  return list
+}
+
+export function getLearnPrefs(): LearnPrefs {
+  return { rate: 1, ...(store.get('learnPrefs') as Partial<LearnPrefs> | undefined) }
+}
+
+export function setLearnPrefs(partial: Partial<LearnPrefs>): LearnPrefs {
+  const next = { ...getLearnPrefs(), ...partial }
+  store.set('learnPrefs', next)
+  return next
 }
 
 export function getSubtitleCache(videoId: string): unknown | null {

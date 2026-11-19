@@ -1,9 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { LearnVideo, LearnStatus } from './services/learn'
-import type { RecentVideo, FavoriteCue } from './services/store'
+import type { RecentVideo, FavoriteCue, VocabItem, LearnPrefs } from './services/store'
 import type { SubtitleCue } from './services/youtube'
 
-export type { LearnVideo, LearnStatus, RecentVideo, FavoriteCue, SubtitleCue }
+export type { LearnVideo, LearnStatus, RecentVideo, FavoriteCue, SubtitleCue, VocabItem, LearnPrefs }
 export type TranslatedItems = {
   videoId: string
   items: { id: string; zh: string; keywords: SubtitleCue['keywords'] }[]
@@ -43,6 +43,14 @@ const api = {
   learnFavorites: (): Promise<FavoriteCue[]> => ipcRenderer.invoke('learn:favorites'),
   learnToggleFavorite: (item: Omit<FavoriteCue, 'savedAt'>): Promise<boolean> =>
     ipcRenderer.invoke('learn:favorite:toggle', item),
+  vocabList: (): Promise<VocabItem[]> => ipcRenderer.invoke('vocab:list'),
+  vocabToggle: (item: Omit<VocabItem, 'id' | 'createdAt'>): Promise<VocabItem[]> =>
+    ipcRenderer.invoke('vocab:toggle', item),
+  vocabUpdate: (word: string, patch: { meaning?: string; detail?: string }): Promise<VocabItem[]> =>
+    ipcRenderer.invoke('vocab:update', word, patch),
+  vocabRemove: (id: string): Promise<VocabItem[]> => ipcRenderer.invoke('vocab:remove', id),
+  learnPrefs: (): Promise<LearnPrefs> => ipcRenderer.invoke('learn:prefs'),
+  setLearnPrefs: (partial: Partial<LearnPrefs>): Promise<LearnPrefs> => ipcRenderer.invoke('learn:prefs:set', partial),
   learnLookup: (word: string, context?: string): Promise<string> =>
     ipcRenderer.invoke('learn:lookup', word, context),
   onLearnOpenVideo: (cb: (input: string) => void) => listen<string>('learn:open-video', cb),
