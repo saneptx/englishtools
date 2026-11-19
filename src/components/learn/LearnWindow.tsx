@@ -369,14 +369,11 @@ export default function LearnWindow() {
         <button type="submit" className="btn" disabled={!input.trim()}>
           打开
         </button>
-        <button
-          type="button"
-          className={`btn secondary vocab-btn${!videoId && tab === 'vocab' ? ' is-on' : ''}`}
-          onClick={() => (videoId ? goHome('vocab') : setTab((t) => (t === 'vocab' ? 'recent' : 'vocab')))}
-          title="生词本"
-        >
-          生词本{vocab.length > 0 && <span className="vocab-count">{vocab.length}</span>}
-        </button>
+        {videoId && (
+          <button type="button" className="btn secondary vocab-btn" onClick={() => goHome('vocab')} title="打开生词本">
+            生词本{vocab.length > 0 && <span className="vocab-count">{vocab.length}</span>}
+          </button>
+        )}
       </form>
 
       {!videoId ? (
@@ -571,13 +568,11 @@ function Landing({
 }) {
   return (
     <div className="learn-landing">
-      {tab === 'recent' && (
-        <div className="landing-hero">
-          <h1>边看视频边学英语</h1>
-          <p>粘贴 YouTube 链接，自动生成逐词同步的双语字幕，并标出值得学的词。</p>
-          {error && <p className="landing-error">{error}</p>}
-        </div>
-      )}
+      <div className="landing-hero">
+        <h1>边看视频边学英语</h1>
+        <p>粘贴 YouTube 链接，自动生成逐词同步的双语字幕，并标出值得学的词。</p>
+        {error && <p className="landing-error">{error}</p>}
+      </div>
       <div className="landing-tabs" role="tablist">
         <button type="button" role="tab" aria-selected={tab === 'recent'} className={tab === 'recent' ? 'is-on' : ''} onClick={() => onTab('recent')}>
           最近观看

@@ -58,7 +58,7 @@ Linux 仅做了基础兼容（划词读取 PRIMARY 选区），打字译英与�
 ## 安装
 
 ### 下载安装包
-在 GitHub 仓库的 **Actions → Build installers → Run workflow** 运行一次（或推送 `v1.0.1` 这样的标签），完成后在运行页面底部的 Artifacts 下载：
+每次推送到 main 都会自动打包，完成后在仓库 **Releases → latest**（预发布版）直接下载，不需要登录。也可以在 **Actions → Build installers → Run workflow** 手动打包，或推送 `v1.0.1` 这样的标签生成正式版草稿：
 
 - macOS：`English Tools-x.y.z-arm64.dmg`（Apple Silicon）/ `-x64.dmg`（Intel），打开后把 English Tools 拖进「应用程序」
 - Windows：`English Tools Setup x.y.z.exe` 安装包，或 `-win.zip` 免安装版（解压后运行 `English Tools.exe`）

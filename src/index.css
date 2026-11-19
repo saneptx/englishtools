@@ -1479,9 +1479,6 @@ body:has(.bubble-stage),
 .learn-toolbar .vocab-btn:hover:not(:disabled) {
   background: var(--surface-hover);
 }
-.learn-toolbar .vocab-btn.is-on {
-  color: var(--accent);
-}
 .vocab-count,
 .tab-count {
   min-width: 18px;
@@ -1503,7 +1500,7 @@ body:has(.bubble-stage),
   padding: 3px;
   border-radius: var(--radius);
   background: var(--field);
-  align-self: flex-start;
+  align-self: center;
 }
 .landing-tabs button {
   display: inline-flex;
@@ -1522,7 +1519,7 @@ body:has(.bubble-stage),
   box-shadow: var(--shadow-card);
 }
 .landing-empty {
-  padding: 32px 0;
+  padding: 24px 0;
   text-align: center;
   color: var(--text-secondary);
   font-size: 13px;
@@ -1536,7 +1533,9 @@ body:has(.bubble-stage),
 }
 .vocab-search {
   height: 32px;
-  max-width: 320px;
+  width: 100%;
+  max-width: 360px;
+  align-self: center;
   background: var(--surface);
   box-shadow: var(--shadow-card);
 }

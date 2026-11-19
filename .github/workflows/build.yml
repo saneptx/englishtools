@@ -1,15 +1,27 @@
 # 在真实的 macOS / Windows 机器上打包安装包。
-# 触发：GitHub 网页 Actions → Build installers → Run workflow，或推送 v* 标签（如 v1.0.1）。
-# 产物在本次运行页面底部的 Artifacts 里下载；推送标签时还会附加到对应的 Release 草稿。
+# 触发：
+#   - 推送到 main（只改文档时跳过）：打包后更新公开的「latest」预发布版，安装包可直接下载
+#   - 推送 v* 标签（如 v1.0.1）：打包后附加到对应的 Release 草稿
+#   - GitHub 网页 Actions → Build installers → Run workflow：手动打包
+# 每次运行的安装包也会保存在运行页面底部的 Artifacts 里。
 name: Build installers
 
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     tags: ['v*']
+    paths-ignore:
+      - '**.md'
+      - 'extension/**'
 
 permissions:
   contents: write
+
+# 同一分支连续推送时，只打最新的一次
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -58,3 +70,27 @@ jobs:
         with:
           draft: true
           files: ${{ matrix.files }}
+
+  # main 上的最新构建：替换公开的 latest 预发布版（Artifacts 要登录才能下载，Release 不用）
+  publish-latest:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Replace latest pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -la dist
+          gh release delete latest --cleanup-tag --yes || true
+          gh release create latest dist/* \
+            --prerelease \
+            --target "${GITHUB_SHA}" \
+            --title "最新构建（main @ ${GITHUB_SHA::7}）" \
+            --notes "main 分支每次推送自动打包。macOS 下载后需运行一次：xattr -dr com.apple.quarantine \"/Applications/English Tools.app\""
