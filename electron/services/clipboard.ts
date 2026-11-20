@@ -30,6 +30,7 @@ export async function captureSelectedText(): Promise<string> {
   const probePs = `
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms, UIAutomationClient, UIAutomationTypes, WindowsBase
+$proc = ''
 try {
   $el = [System.Windows.Automation.AutomationElement]::FocusedElement
   if ($null -ne $el) {
@@ -64,7 +65,7 @@ try {
     }
   }
 } catch {}
-Write-Output '__NEED_COPY__'
+Write-Output ('__NEED_COPY__:' + $proc)
 `
 
   let probeOut = ''
@@ -80,7 +81,12 @@ Write-Output '__NEED_COPY__'
     diag('select', { step: 'uia-probe-failed', ms: Date.now() - t0, err: String(err).slice(0, 200) })
     return ''
   }
-  diag('select', { step: 'uia-probe', result: probeOut.split(':')[0].slice(0, 20), ms: Date.now() - t0 })
+  diag('select', {
+    step: 'uia-probe',
+    result: probeOut.split(':')[0].slice(0, 20),
+    proc: probeOut.startsWith('__NEED_COPY__:') ? probeOut.slice(14, 60) : undefined,
+    ms: Date.now() - t0,
+  })
 
   if (!probeOut || probeOut.startsWith('__ABORT__')) {
     return ''

@@ -106,6 +106,27 @@ export type MacInputProbe = {
 const EDITABLE_ROLES = ['AXTextField', 'AXTextArea', 'AXComboBox', 'AXSearchField']
 
 /**
+ * Chromium 内核浏览器默认不生成网页的无障碍树，读不到网页里的输入框。
+ * 它们认 AXEnhancedUserInterface（Electron 应用认 AXManualAccessibility），打开后才暴露焦点输入框。
+ */
+export const MAC_CHROMIUM_BROWSERS = new Set([
+  'com.google.Chrome',
+  'com.google.Chrome.beta',
+  'com.google.Chrome.dev',
+  'com.google.Chrome.canary',
+  'org.chromium.Chromium',
+  'com.microsoft.edgemac',
+  'com.microsoft.edgemac.Beta',
+  'com.microsoft.edgemac.Dev',
+  'com.brave.Browser',
+  'company.thebrowser.Browser',
+  'com.vivaldi.Vivaldi',
+  'com.operasoftware.Opera',
+  'com.kagi.kagimacOS',
+  'ai.perplexity.comet',
+])
+
+/**
  * 读取前台焦点输入框。每一步单独 try，尽量多拿信息：
  * 不少跨平台框架（Qt、Chromium/Electron）的控件角色不规范或不给位置，
  * 只要控件带 AXSelectedTextRange（可编辑文本的特征）也视为输入框。
@@ -134,6 +155,11 @@ try
       try
         set value of attribute "AXManualAccessibility" of p to true
       end try
+      if bid is in {${[...MAC_CHROMIUM_BROWSERS].map((x) => `"${x}"`).join(', ')}} then
+        try
+          set value of attribute "AXEnhancedUserInterface" of p to true
+        end try
+      end if
       try
         set w to value of attribute "AXFocusedWindow" of p
         set {wx, wy} to position of w

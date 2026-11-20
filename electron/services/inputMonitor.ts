@@ -2,7 +2,7 @@ import { clipboard, screen } from 'electron'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { ScreenRect } from './selectionBounds'
-import { macProbeFocusedInput, macSendCommandKeys, macSendKeys } from './macAutomation'
+import { MAC_CHROMIUM_BROWSERS, macProbeFocusedInput, macSendCommandKeys, macSendKeys } from './macAutomation'
 import { copySelectionPreservingClipboard } from './clipboard'
 import { macReadInputByOcr } from './macScreenOcr'
 import { diag, diagEnabled } from './diag'
@@ -140,6 +140,43 @@ try {
   }
 
   $ct = $el.Current.ControlType.ProgrammaticName
+
+  # Chromium 内核（Chrome / Edge / Electron 应用）没开无障碍时，焦点只能读到整个窗口：
+  # 向网页区域发 WM_GETOBJECT 唤醒无障碍树，稍等后重读焦点
+  if ($ct -match 'Window|Pane') {
+    try {
+      Add-Type -TypeDefinition @"
+using System; using System.Text; using System.Runtime.InteropServices;
+public static class EtChromiumWake {
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr p, EnumProc cb, IntPtr l);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr h, uint m, IntPtr w, IntPtr l, uint f, uint t, out IntPtr r);
+  public static int Run() {
+    int n = 0;
+    EnumChildWindows(GetForegroundWindow(), (h, l) => {
+      var sb = new StringBuilder(64); GetClassName(h, sb, 64);
+      if (sb.ToString().StartsWith("Chrome_RenderWidgetHostHWND")) {
+        IntPtr r;
+        foreach (int obj in new[] { -25, 1, -4 }) SendMessageTimeout(h, 0x3D, IntPtr.Zero, (IntPtr)obj, 2, 200, out r);
+        n++;
+      }
+      return true;
+    }, IntPtr.Zero);
+    return n;
+  }
+}
+"@ -ErrorAction SilentlyContinue
+      if ([EtChromiumWake]::Run() -gt 0) {
+        Start-Sleep -Milliseconds 250
+        $el = [System.Windows.Automation.AutomationElement]::FocusedElement
+        if ($null -eq $el) { exit 0 }
+        $ct = $el.Current.ControlType.ProgrammaticName
+      }
+    } catch {}
+  }
+
   $isEditableType = $ct -match '(Edit|Document|ComboBox|Text|Custom|Pane)'
   if (-not $isEditableType) {
     Write-Output ('__SKIP__:proc=' + $proc + ' type=' + $ct)
@@ -239,7 +276,7 @@ try {
   try {
     const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', ps], {
       windowsHide: true,
-      timeout: 2000,
+      timeout: 3500,
       encoding: 'utf8',
     })
     const line = (stdout || '').trim().split(/\r?\n/).pop() || ''
@@ -305,7 +342,12 @@ async function readFocusedInputMac(
   ownPid: number,
   opts: ReadInputOptions,
 ): Promise<FocusedInputInfo | null> {
-  const probe = await macProbeFocusedInput(ownPid)
+  let probe = await macProbeFocusedInput(ownPid)
+  // Chromium 浏览器刚被打开无障碍开关时，网页的无障碍树要稍等片刻才建好，重读一次
+  if (probe.status === 'nofocus' && MAC_CHROMIUM_BROWSERS.has(probe.bundleId)) {
+    await sleep(250)
+    probe = await macProbeFocusedInput(ownPid)
+  }
   diag('type', {
     step: 'ax-probe',
     status: probe.status,
