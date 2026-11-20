@@ -2,6 +2,7 @@ import { clipboard } from 'electron'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { macProbeSelection, macSendCommandKeys } from './macAutomation'
+import { diag } from './diag'
 
 const execFileAsync = promisify(execFile)
 
@@ -67,6 +68,7 @@ Write-Output '__NEED_COPY__'
 `
 
   let probeOut = ''
+  const t0 = Date.now()
   try {
     const res = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', probePs], {
       windowsHide: true,
@@ -74,9 +76,11 @@ Write-Output '__NEED_COPY__'
       encoding: 'utf8',
     })
     probeOut = (res.stdout || '').trim()
-  } catch {
+  } catch (err) {
+    diag('select', { step: 'uia-probe-failed', ms: Date.now() - t0, err: String(err).slice(0, 200) })
     return ''
   }
+  diag('select', { step: 'uia-probe', result: probeOut.split(':')[0].slice(0, 20), ms: Date.now() - t0 })
 
   if (!probeOut || probeOut.startsWith('__ABORT__')) {
     return ''
@@ -101,7 +105,9 @@ Add-Type -AssemblyName System.Windows.Forms
 
 /** macOS：先读 AXSelectedText（零剪贴板操作），读不到再回退 Cmd+C */
 async function captureSelectedTextMac(): Promise<string> {
+  const t0 = Date.now()
   const probe = await macProbeSelection()
+  diag('select', { step: 'ax-probe', kind: probe.kind, app: 'app' in probe ? probe.app : undefined, ms: Date.now() - t0 })
   if (probe.kind === 'abort') return ''
   if (probe.kind === 'text') return probe.text
   return copySelectionPreservingClipboard(() => macSendCommandKeys('c'))
@@ -130,9 +136,11 @@ export async function copySelectionPreservingClipboard(sendCopy: () => Promise<v
     }
   }
 
+  const t0 = Date.now()
   try {
     await sendCopy()
-  } catch {
+  } catch (err) {
+    diag('copy', { step: 'send-failed', ms: Date.now() - t0, err: String(err).slice(0, 200) })
     restorePreviousTextIfNeeded()
     return ''
   }
@@ -141,14 +149,17 @@ export async function copySelectionPreservingClipboard(sendCopy: () => Promise<v
 
   // 如果此时剪贴板里仍然是图片（说明 ^c 没有复制出任何文本，或刚被截图工具写入了图片），绝不改动剪贴板
   if (!clipboard.readImage().isEmpty()) {
+    diag('copy', { step: 'image-on-clipboard', hadImageBefore })
     return ''
   }
 
   const rawAfter = clipboard.readText()
   if (!rawAfter || rawAfter === SENTINEL) {
+    diag('copy', { step: 'nothing-copied', ms: Date.now() - t0 })
     restorePreviousTextIfNeeded()
     return ''
   }
+  diag('copy', { step: 'ok', len: rawAfter.length, ms: Date.now() - t0 })
 
   const selected = rawAfter.trim()
 

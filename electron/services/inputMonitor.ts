@@ -5,6 +5,7 @@ import type { ScreenRect } from './selectionBounds'
 import { macProbeFocusedInput, macSendCommandKeys, macSendKeys } from './macAutomation'
 import { copySelectionPreservingClipboard } from './clipboard'
 import { macReadInputByOcr } from './macScreenOcr'
+import { diag, diagEnabled } from './diag'
 
 /**
  * macOS 上读不到无障碍信息的聊天应用：自动打字检测时改为截屏识别输入框（不发按键、不碰剪贴板）。
@@ -134,12 +135,16 @@ try {
 
   $proc = (Get-Process -Id $pidVal -ErrorAction SilentlyContinue).ProcessName
   if ($proc -match '^(${skipProcs})$') {
+    Write-Output ('__SKIP__:proc=' + $proc)
     exit 0
   }
 
   $ct = $el.Current.ControlType.ProgrammaticName
   $isEditableType = $ct -match '(Edit|Document|ComboBox|Text|Custom|Pane)'
-  if (-not $isEditableType) { exit 0 }
+  if (-not $isEditableType) {
+    Write-Output ('__SKIP__:proc=' + $proc + ' type=' + $ct)
+    exit 0
+  }
 
   $elRect = $el.Current.BoundingRectangle
   $text = ''
@@ -152,7 +157,10 @@ try {
   # 1. 优先尝试 ValuePattern（绝大多数单行/多行输入框、浏览器 input/textarea、微信/飞书输入框）
   $vp = $null
   if ($el.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp)) {
-    if ($vp.Current.IsReadOnly) { exit 0 }
+    if ($vp.Current.IsReadOnly) {
+      Write-Output ('__SKIP__:proc=' + $proc + ' type=' + $ct + ' readonly')
+      exit 0
+    }
     $text = $vp.Current.Value
     $isFullValue = $true
   }
@@ -213,6 +221,8 @@ try {
   }
 
   $out = @{
+    proc = $proc
+    ctype = $ct
     ok = $true
     text = $text
     isFullValue = $isFullValue
@@ -225,6 +235,7 @@ try {
 } catch {}
 `
 
+  const t0 = Date.now()
   try {
     const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', ps], {
       windowsHide: true,
@@ -232,6 +243,18 @@ try {
       encoding: 'utf8',
     })
     const line = (stdout || '').trim().split(/\r?\n/).pop() || ''
+    if (diagEnabled()) {
+      let info: Record<string, unknown> = { result: line.startsWith('__SKIP__') ? line : line ? 'json' : 'empty' }
+      if (line.startsWith('{')) {
+        try {
+          const j = JSON.parse(line) as { proc?: string; ctype?: string; text?: string }
+          info = { result: 'ok', proc: j.proc, ctype: j.ctype, len: (j.text || '').length }
+        } catch {
+          /* ignore */
+        }
+      }
+      diag('type', { step: 'uia-probe', ms: Date.now() - t0, ...info })
+    }
     if (!line.startsWith('{')) return null
     const parsed = JSON.parse(line) as {
       ok?: boolean
@@ -269,7 +292,8 @@ try {
       rect: dipRect,
       isFullValue: parsed.isFullValue !== false,
     }
-  } catch {
+  } catch (err) {
+    diag('type', { step: 'uia-probe-failed', ms: Date.now() - t0, err: String(err).slice(0, 200) })
     return null
   }
 }
@@ -282,13 +306,16 @@ async function readFocusedInputMac(
   opts: ReadInputOptions,
 ): Promise<FocusedInputInfo | null> {
   const probe = await macProbeFocusedInput(ownPid)
-  if (DEBUG) {
-    console.log(
-      `[input] ${probe.status} app=${probe.app} (${probe.bundleId}) role=${probe.role || '-'} ` +
-        `len=${probe.text.length} rect=${JSON.stringify(probe.rect)} win=${JSON.stringify(probe.windowRect)}` +
-        (probe.status === 'error' ? ` err=${probe.text.slice(0, 200)}` : ''),
-    )
-  }
+  diag('type', {
+    step: 'ax-probe',
+    status: probe.status,
+    app: probe.app,
+    bundleId: probe.bundleId,
+    role: probe.role || '-',
+    len: probe.status === 'error' ? undefined : probe.text.length,
+    hasRect: !!probe.rect,
+    err: probe.status === 'error' ? probe.text.slice(0, 200) : undefined,
+  })
   if (probe.status === 'own' || probe.status === 'secure' || probe.status === 'error') return null
 
   let text = probe.status === 'ok' ? probe.text : ''

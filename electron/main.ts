@@ -40,6 +40,7 @@ import {
 import { translate, lookupWord } from './services/deepseek'
 import { loadLearnVideo, cancelLearnJob } from './services/learn'
 import { captureSelectedText } from './services/clipboard'
+import { diag } from './services/diag'
 import { ocrFromDataUrl } from './services/ocr'
 import { synthesizeEdgeTts } from './services/tts'
 import { readFocusedInput, replaceFocusedInputText } from './services/inputMonitor'
@@ -533,16 +534,18 @@ function isPointOverOurWindows(point: { x: number; y: number }) {
 }
 
 async function onGlobalSelection(rawRect: SelectionRect) {
-  if (screenshotActive || Date.now() < ignoreSelectionUntil) return
-  if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) return
+  const t0 = Date.now()
+  diag('select', { step: 'drag', w: Math.round(rawRect.width), h: Math.round(rawRect.height) })
+  if (screenshotActive || Date.now() < ignoreSelectionUntil) return diag('select', { skip: 'screenshot-or-cooldown' })
+  if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) return diag('select', { skip: 'overlay' })
   const settings = getSettings()
-  if (!settings.autoSelectTranslate) return
+  if (!settings.autoSelectTranslate) return diag('select', { skip: 'disabled' })
   const cursor = rawRect.cursorDip ?? screen.getCursorScreenPoint()
   const dipEnd = hookPointToDip({ x: rawRect.endX, y: rawRect.endY }, cursor)
   if (isPointOverOurWindows(cursor) || isPointOverOurWindows(dipEnd)) {
-    return
+    return diag('select', { skip: 'over-own-window' })
   }
-  if (translating) return
+  if (translating) return diag('select', { skip: 'busy-translating' })
 
   const seq = ++activeTaskSeq
   translating = true
@@ -550,18 +553,21 @@ async function onGlobalSelection(rawRect: SelectionRect) {
   const anchor = expandToTextLine(hookRectToDip(rawRect, cursor))
   try {
     const text = await captureSelectedText()
+    diag('select', { step: 'captured', len: text.length, ms: Date.now() - t0 })
     if (seq !== activeTaskSeq || screenshotActive) return
     if (!text) return
-    if (!/[A-Za-z\u00C0-\u024F]/.test(text)) return
+    if (!/[A-Za-z\u00C0-\u024F]/.test(text)) return diag('select', { skip: 'no-latin-letters' })
 
     placeBelowDipRect(anchor, 88, 36)
     await showInlineResult({ source: text, translation: '…', loading: true, mode: 'selection' })
     const translation = await translate(text, 'en-zh')
     if (seq !== activeTaskSeq || screenshotActive) return
     await showTranslationResult(anchor, text, translation, 'selection')
+    diag('select', { step: 'shown', ms: Date.now() - t0 })
   } catch (err) {
     if (seq !== activeTaskSeq || screenshotActive) return
     const msg = err instanceof Error ? err.message : String(err)
+    diag('select', { step: 'error', msg: msg.slice(0, 200) })
     placeBelowDipRect(anchor, 240, 36)
     await showInlineResult({ source: '', translation: msg, error: true, mode: 'selection' })
   } finally {
@@ -576,9 +582,11 @@ async function onGlobalTypingPause(hint: { maybeComposing: boolean } = { maybeCo
   if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) return
   const settings = getSettings()
   if (settings.autoTypeTranslate === false) return
-  if (translating) return
+  if (translating) return diag('type', { skip: 'busy-translating' })
 
+  const t0 = Date.now()
   const info = await readFocusedInput(process.pid, hint)
+  diag('type', { step: 'read', len: info?.text.length ?? -1, hasChinese: !!info && /[\u4e00-\u9fff]/.test(info.text), ms: Date.now() - t0 })
   if (!info || !info.text) {
     if (lastBubbleMode === 'typing' && bubbleWindow?.isVisible()) {
       lastTypedSourceText = ''

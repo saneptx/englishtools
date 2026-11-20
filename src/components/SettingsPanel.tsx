@@ -176,6 +176,7 @@ export default function SettingsPanel() {
     else setAutoTypeTranslate(value)
     try {
       await window.englishTools.setSettings({ [key]: value })
+      flash('ok', '已生效')
     } catch (e) {
       flash('error', e instanceof Error ? e.message : String(e))
     }
@@ -203,6 +204,18 @@ export default function SettingsPanel() {
 
   const set = (key: keyof TextFields) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setFields((f) => ({ ...f, [key]: e.target.value }))
+
+  // ⌘S / Ctrl+S 保存
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        if (dirty) void save()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 
   const missingPerms = IS_MAC && (!perms.accessibility || !perms.screen)
   const alt = IS_MAC ? '⌥' : 'Alt'
@@ -287,7 +300,10 @@ export default function SettingsPanel() {
                 setAutostart((a) => ({ ...a, enabled: v }))
                 void window.englishTools
                   .setAutostart(v)
-                  .then(setAutostart)
+                  .then((a) => {
+                    setAutostart(a)
+                    flash('ok', '已生效')
+                  })
                   .catch((e) => flash('error', e instanceof Error ? e.message : String(e)))
               }}
             />
@@ -431,12 +447,13 @@ export default function SettingsPanel() {
 
       <footer className="settings-footer">
         <span className={`status${status ? ` is-${status.kind}` : ''}`} role="status">
-          {status?.text ?? (dirty ? '有未保存的修改' : '')}
+          {status?.text ?? (dirty ? '有未保存的修改' : '开关即时生效；修改文本框后点保存')}
         </span>
         <button
           type="button"
           className="btn"
           disabled={!dirty}
+          title={dirty ? `保存（${IS_MAC ? '⌘' : 'Ctrl+'}S）` : '没有需要保存的修改'}
           onClick={() => void save()}
         >
           保存

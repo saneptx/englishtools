@@ -27,9 +27,9 @@ async function runAppleScript(script: string, timeout = 2500): Promise<string> {
 }
 
 export type MacSelectionProbe =
-  | { kind: 'abort' }
-  | { kind: 'text'; text: string }
-  | { kind: 'need-copy' }
+  | { kind: 'abort'; app?: string }
+  | { kind: 'text'; text: string; app: string }
+  | { kind: 'need-copy'; app: string }
 
 /** 读取前台应用焦点控件的 AXSelectedText；读不到时告诉调用方是否可回退 Cmd+C */
 export async function macProbeSelection(): Promise<MacSelectionProbe> {
@@ -58,11 +58,11 @@ return pn & sep & t`
   const procName = out.slice(0, idx).trim()
   const text = out.slice(idx + 1).trim()
 
-  if (SKIP_PROCESS_RE.test(procName)) return { kind: 'abort' }
-  if (text) return { kind: 'text', text }
+  if (SKIP_PROCESS_RE.test(procName)) return { kind: 'abort', app: procName }
+  if (text) return { kind: 'text', text, app: procName }
   // Finder 中拖选的是文件图标，Cmd+C 会复制文件而不是文字
-  if (procName === 'Finder' || procName === '访达') return { kind: 'abort' }
-  return { kind: 'need-copy' }
+  if (procName === 'Finder' || procName === '访达') return { kind: 'abort', app: procName }
+  return { kind: 'need-copy', app: procName }
 }
 
 /** 物理键码（ANSI 布局），不受输入法影响 */
