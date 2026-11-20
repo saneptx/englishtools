@@ -925,6 +925,9 @@ function registerIpc() {
     ignoreOutsideUntil = Date.now() + 800
     lastTypedSourceText = ''
     try {
+      // 用 ⌥2 / Alt+2 触发时 ⌥ 往往还按着：此时发出的 ⌘A ⌘V 会变成 ⌥⌘A ⌥⌘V（Windows 上是 Ctrl+Alt+A，
+      // 还会触发 QQ 截图），输入框不会被替换。先等修饰键松开
+      await waitForModifiersReleased()
       return await replaceFocusedInputText(text)
     } finally {
       setSelectionHookSuspended(false)
